@@ -1,0 +1,6 @@
+{
+  "name": "WhatsApp AI Drive Assistant",
+  "description": "Intelligent personal assistant accessible through WhatsApp with Google Drive document organization, RAG search, long-term memory, internet research, and automated task execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
