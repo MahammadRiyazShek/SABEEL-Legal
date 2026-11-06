@@ -207,6 +207,43 @@ gcloud run deploy whatsapp-drive-genie \\
       {activeDeployTab === 'github' ? (
         /* GITHUB PAGES TAB */
         <div className="space-y-5">
+          {/* Critical Troubleshooting: Blank Screen Fix */}
+          <div className="rounded-2xl border border-amber-500/40 bg-amber-950/20 p-5 space-y-3">
+            <div className="flex items-center gap-2 text-amber-400 font-semibold text-sm">
+              <ShieldCheck className="w-5 h-5 text-amber-400 shrink-0" />
+              Fixing White Blank Screen on GitHub Pages (Read This First)
+            </div>
+            <p className="text-xs text-zinc-300 leading-relaxed">
+              If your GitHub Pages link shows a white blank screen, it is almost always caused by GitHub trying to serve raw, unbuilt source code instead of the compiled bundle. Follow one of these two options:
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+              <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs space-y-1.5">
+                <span className="font-bold text-emerald-400 flex items-center gap-1.5">
+                  ✅ Option A: Use GitHub Actions (Zero Hassle)
+                </span>
+                <ol className="list-decimal list-inside text-zinc-400 text-[11px] space-y-1">
+                  <li>Push your repository to GitHub.</li>
+                  <li>Go to <strong>Settings &gt; Pages</strong>.</li>
+                  <li>Under <strong>Source</strong>, select <span className="text-white font-semibold">"GitHub Actions"</span> (do NOT select "Deploy from a branch").</li>
+                  <li>Our included <code className="text-cyan-300">deploy.yml</code> workflow will compile and launch the app in 30 seconds!</li>
+                </ol>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 text-xs space-y-1.5">
+                <span className="font-bold text-blue-400 flex items-center gap-1.5">
+                  📁 Option B: Manual File Upload
+                </span>
+                <ol className="list-decimal list-inside text-zinc-400 text-[11px] space-y-1">
+                  <li>Run <code className="text-cyan-300">npm run build</code> locally.</li>
+                  <li>Open the <span className="text-white font-semibold">dist/</span> folder.</li>
+                  <li>Upload the contents of <span className="text-white font-semibold">dist/</span> (index.html, 404.html, assets/) directly to your branch.</li>
+                  <li><em>Never upload raw <code className="text-zinc-500">.tsx</code> files directly to GitHub Pages.</em></li>
+                </ol>
+              </div>
+            </div>
+          </div>
+
           {/* Step 1: Base URL and Build */}
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4">
             <div className="flex items-center gap-2.5">
