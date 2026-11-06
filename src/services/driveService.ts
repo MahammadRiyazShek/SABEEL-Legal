@@ -8,114 +8,7 @@ import { DriveItem } from '../types/assistant';
 import { classifyDocumentForDrive, formatBytes } from '../utils/driveOrganizer';
 import { getAccessToken } from './firebaseAuth';
 
-const INITIAL_SANDBOX_FILES: DriveItem[] = [
-  {
-    id: 'folder_root_assistant',
-    name: 'WhatsApp Assistant',
-    mimeType: 'application/vnd.google-apps.folder',
-    isFolder: true,
-    parents: ['root'],
-    createdTime: '2026-10-15T10:00:00Z',
-    modifiedTime: '2026-10-15T10:00:00Z',
-    category: 'General',
-  },
-  {
-    id: 'folder_financial',
-    name: 'Financial & Invoices',
-    mimeType: 'application/vnd.google-apps.folder',
-    isFolder: true,
-    parents: ['folder_root_assistant'],
-    createdTime: '2026-10-15T10:05:00Z',
-    modifiedTime: '2026-10-15T10:05:00Z',
-    category: 'Financial',
-  },
-  {
-    id: 'folder_legal',
-    name: 'Legal & Contracts',
-    mimeType: 'application/vnd.google-apps.folder',
-    isFolder: true,
-    parents: ['folder_root_assistant'],
-    createdTime: '2026-10-15T10:06:00Z',
-    modifiedTime: '2026-10-15T10:06:00Z',
-    category: 'Legal & Contracts',
-  },
-  {
-    id: 'folder_reports',
-    name: 'Work & Reports',
-    mimeType: 'application/vnd.google-apps.folder',
-    isFolder: true,
-    parents: ['folder_root_assistant'],
-    createdTime: '2026-10-15T10:07:00Z',
-    modifiedTime: '2026-10-15T10:07:00Z',
-    category: 'Work & Reports',
-  },
-  {
-    id: 'file_inv_001',
-    name: 'Cloud_Hosting_Invoice_Oct2026.pdf',
-    mimeType: 'application/pdf',
-    size: 245760,
-    isFolder: false,
-    parents: ['folder_financial'],
-    createdTime: '2026-10-20T14:32:00Z',
-    modifiedTime: '2026-10-20T14:32:00Z',
-    category: 'Financial',
-    tags: ['Invoice', 'Hosting', 'Google Cloud'],
-    content: `INVOICE #INV-9821
-Date: October 20, 2026
-Vendor: CloudScale Infrastructure Inc.
-Customer: TechVentures AI Studio
-Line Items:
-1. Google Cloud Run Managed Microservices (Asia-Southeast1): $1,450.00
-2. Cloud Storage & Egress: $280.00
-3. Cloud DNS & SSL Termination: $45.00
-Subtotal: $1,775.00
-Tax (VAT 10%): $177.50
-Total Due: $1,952.50
-Payment Terms: Net 30. Bank transfer or credit card accepted.
-Status: Paid in full via auto-debit.`,
-  },
-  {
-    id: 'file_contract_001',
-    name: 'Software_Consulting_Agreement_Signed.pdf',
-    mimeType: 'application/pdf',
-    size: 512000,
-    isFolder: false,
-    parents: ['folder_legal'],
-    createdTime: '2026-09-12T09:15:00Z',
-    modifiedTime: '2026-09-12T09:15:00Z',
-    category: 'Legal & Contracts',
-    tags: ['Contract', 'Consulting', 'NDA'],
-    content: `MASTER SERVICES & CONSULTING AGREEMENT
-Effective Date: September 15, 2026
-Between: TechVentures Corp ("Client") and Apex AI Solutions ("Consultant")
-Scope of Work: Delivery of autonomous WhatsApp conversational agents, Google Drive document pipelines, and enterprise RAG architecture.
-Key Terms:
-- Section 4.1: Hourly rate $185/hr or fixed monthly retainer $12,500.
-- Section 6.2: Intellectual property rights: All custom source code, RAG embeddings, and Google Drive automation scripts remain 100% owned by Client.
-- Section 8.3: Termination notice: Either party may terminate with 30 calendar days written notice.
-- Section 11: Confidentiality non-disclosure strictly in effect for 3 years post-termination.`,
-  },
-  {
-    id: 'file_report_001',
-    name: 'Q3_Enterprise_RAG_Architecture_Review.pdf',
-    mimeType: 'application/pdf',
-    size: 780000,
-    isFolder: false,
-    parents: ['folder_reports'],
-    createdTime: '2026-10-28T16:00:00Z',
-    modifiedTime: '2026-10-28T16:00:00Z',
-    category: 'Work & Reports',
-    tags: ['Architecture', 'RAG', 'Gemini'],
-    content: `Q3 ENTERPRISE RAG ARCHITECTURE & SYSTEM REVIEW
-Executive Summary:
-The integration of Gemini 3.8 Flash with Google Drive vector pipelines achieved sub-200ms document classification and 98.4% retrieval accuracy on technical documentation.
-Key Recommendations:
-1. Multi-modal chunking: Index diagrams and scanned invoices using Gemini OCR inline.
-2. WhatsApp Webhook: Deploy with Cloud Run scale-to-zero microservice to handle peak message bursts up to 250 req/sec.
-3. Memory Store: Implement dual-tier memory (short-term conversational context + long-term user entity graphs).
-Conclusion: Ready for production rollout on Google Cloud Run.`,
-  },
-];
+const INITIAL_SANDBOX_FILES: DriveItem[] = [];
 
 class DriveService {
   private sandboxFiles: DriveItem[] = [];
@@ -142,7 +35,7 @@ class DriveService {
     try {
       localStorage.setItem('assistant_sandbox_drive', JSON.stringify(this.sandboxFiles));
     } catch {
-      // storage limit or SSR
+      throw new Error('Browser storage is full or unavailable. Connect Google Drive before uploading large files.');
     }
   }
 
@@ -157,7 +50,7 @@ class DriveService {
 
     if (accessToken) {
       try {
-        let q = `'${folderId}' in parents and trashed = false`;
+        let q = folderId === 'all' ? 'trashed = false' : `'${folderId.replace(/'/g, "\\'")}' in parents and trashed = false`;
         if (searchTerm) {
           q += ` and name contains '${searchTerm.replace(/'/g, "\\'")}'`;
         }
@@ -195,9 +88,9 @@ class DriveService {
       } catch (err: any) {
         console.warn('Live Google Drive request failed, falling back to sandbox storage:', err.message);
         return {
-          files: this.listSandboxFiles(folderId, searchTerm),
+          files: [],
           isLive: false,
-          error: `Live Google Drive note: ${err.message}. Showing sandbox storage.`,
+          error: `Google Drive request failed: ${err.message}. No local files substituted. Reconnect if the token expired.`,
         };
       }
     }
@@ -266,8 +159,9 @@ class DriveService {
           };
           return { folder, isLive: true };
         }
+        throw new Error(`Google Drive folder creation failed (${res.status}): ${await res.text()}`);
       } catch (err) {
-        console.warn('Failed creating live folder:', err);
+        throw err;
       }
     }
 
@@ -372,8 +266,9 @@ class DriveService {
           };
           return { file: driveItem, isLive: true, targetFolder: classification.folderName };
         }
+        throw new Error(`Google Drive upload failed (${res.status}): ${await res.text()}`);
       } catch (err) {
-        console.warn('Live Google Drive upload failed, saving to sandbox:', err);
+        throw err;
       }
     }
 
@@ -402,6 +297,7 @@ class DriveService {
    */
   async getOrCreateCategorizedFolders(): Promise<Record<string, string>> {
     const rootRes = await this.listFiles('root');
+    if (rootRes.error) throw new Error(rootRes.error);
     let assistantFolder = rootRes.files.find(
       f => f.isFolder && f.name.toLowerCase() === 'whatsapp assistant'
     );
@@ -412,6 +308,7 @@ class DriveService {
     }
 
     const subRes = await this.listFiles(assistantFolder.id);
+    if (subRes.error) throw new Error(subRes.error);
     const mapping: Record<string, string> = {
       General: assistantFolder.id,
     };
@@ -450,8 +347,9 @@ class DriveService {
         if (res.ok) {
           return { success: true, isLive: true };
         }
+        throw new Error(`Google Drive deletion failed (${res.status}).`);
       } catch (err) {
-        console.warn('Failed deleting live file:', err);
+        throw err;
       }
     }
 
@@ -463,19 +361,21 @@ class DriveService {
   /**
    * Get file content
    */
-  async getFileContent(fileId: string): Promise<string> {
+  async getFileContent(fileId: string, mimeType = 'text/plain'): Promise<string> {
     const accessToken = await getAccessToken();
 
     if (accessToken) {
       try {
-        const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+        const endpoint = mimeType === 'application/vnd.google-apps.document' ? `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}/export?mimeType=text/plain` : `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
+        const res = await fetch(endpoint, {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
         if (res.ok) {
           return await res.text();
         }
+        throw new Error(`Google Drive download failed (${res.status}).`);
       } catch (err) {
-        console.warn('Failed getting live file content, checking sandbox:', err);
+        throw err;
       }
     }
 

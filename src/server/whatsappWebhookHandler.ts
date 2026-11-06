@@ -1,4 +1,4 @@
-import { handleAssistantChat } from './geminiHandler';
+import { handleAssistantChat } from './geminiHandler.ts';
 
 export interface WhatsAppIncomingPayload {
   object: string;

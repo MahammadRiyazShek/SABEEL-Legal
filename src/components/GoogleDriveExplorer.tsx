@@ -37,6 +37,7 @@ interface GoogleDriveExplorerProps {
 export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
   onSelectDocumentForChat,
 }) => {
+  const fileInput=React.useRef<HTMLInputElement>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string>('root');
   const [items, setItems] = useState<DriveItem[]>([]);
   const [allFolders, setAllFolders] = useState<DriveItem[]>([]);
@@ -82,7 +83,7 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
       const allRes = await driveService.listFiles('all');
       setAllFolders(allRes.files.filter(f => f.isFolder));
     } catch (err: any) {
-      console.error('Failed to load drive files:', err);
+      setNotice(err.message || 'Could not list files.');
     } finally {
       setIsLoading(false);
     }
@@ -128,7 +129,7 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
     e.preventDefault();
     if (!newFolderName.trim()) return;
 
-    await driveService.createFolder(newFolderName.trim(), currentFolderId);
+    try { await driveService.createFolder(newFolderName.trim(), currentFolderId); } catch(error:any) { setNotice(error.message); return; }
     setNewFolderName('');
     setIsCreateFolderOpen(false);
     loadFiles();
@@ -138,6 +139,7 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
     e.preventDefault();
     if (!uploadFileName.trim()) return;
 
+    try {
     const res = await driveService.uploadFile(
       uploadFileName.trim(),
       'text/plain',
@@ -157,8 +159,9 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
     setUploadFileName('');
     setUploadContent('');
     setIsUploadOpen(false);
-    setNotice(`Document saved and organized into '${res.targetFolder}'!`);
+    setNotice(`${res.isLive ? 'Saved to Google Drive' : 'Saved locally in this browser only'}: ${res.targetFolder}`);
     loadFiles();
+    } catch(error:any) { setNotice(error.message); }
   };
 
   const handleDeleteConfirmed = async () => {
@@ -169,11 +172,36 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
       setItemToDelete(null);
       loadFiles();
     } catch (err: any) {
-      console.error('Delete error:', err);
+      setNotice(err.message || 'Delete failed.');
     } finally {
       setIsDeleting(false);
     }
   };
+
+  async function readDocument(item:DriveItem):Promise<DriveItem|null>{
+    try {
+      if(item.content)return item;
+      const textType=item.mimeType.startsWith('text/')||item.mimeType==='application/json'||item.mimeType==='application/vnd.google-apps.document';
+      if(!textType){setNotice('Text preview is supported for text files and Google Docs. Open this file in Google Drive, or attach the original PDF/image in the Assistant tab for AI analysis.');if(item.webViewLink)window.open(item.webViewLink,'_blank','noopener,noreferrer');return null;}
+      if(item.size && item.size>2*1024*1024)throw new Error('Text preview is limited to 2 MB. Download a smaller extract first.');
+      const content=await driveService.getFileContent(item.id,item.mimeType);
+      ragService.indexDocument(item.name,content,item.mimeType,item.id,item.category);
+      return {...item,content};
+    }catch(error:any){setNotice(error.message);return null;}
+  }
+  async function preview(item:DriveItem){const doc=await readDocument(item);if(doc)setPreviewDoc(doc);}
+  async function ask(item:DriveItem){const doc=await readDocument(item);if(doc)onSelectDocumentForChat?.({title:doc.name,content:doc.content||''});}
+
+  async function uploadOriginal(e:React.ChangeEvent<HTMLInputElement>){
+    const file=e.target.files?.[0];if(!file)return;
+    try {
+      if(file.size>15*1024*1024)throw new Error('Choose a file smaller than 15 MB.');
+      const content=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(new Error('Cannot read file'));reader.onload=()=>resolve(String(reader.result));if(file.type.startsWith('text/')||/\.(txt|md|csv|json)$/i.test(file.name))reader.readAsText(file);else reader.readAsDataURL(file);});
+      const result=await driveService.uploadFile(file.name,file.type||'application/octet-stream',content,currentFolderId);
+      if(!content.startsWith('data:'))ragService.indexDocument(file.name,content,file.type,result.file.id,result.file.category);
+      await loadFiles();setNotice(`${result.isLive?'Uploaded original file to Google Drive':'Stored locally in this browser only'}: ${file.name}`);
+    }catch(error:any){setNotice(error.message);}finally{e.target.value='';}
+  }
 
   // Breadcrumbs
   const breadcrumbs = buildFolderPath(currentFolderId, allFolders);
@@ -209,7 +237,7 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
                     : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
                 }`}
               >
-                {isLiveConnected ? 'Live Google Drive' : 'Sandbox Storage (Ready for Cloud Run)'}
+                {isLiveConnected ? 'Live Google Drive' : 'Local storage · not Google Drive'}
               </span>
             </div>
             <p className="mt-1 text-xs text-zinc-400">
@@ -269,6 +297,7 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
           </div>
         )}
 
+        <div className="mt-4 flex items-center gap-3"><input type="file" ref={fileInput} className="hidden" onChange={uploadOriginal}/><button onClick={()=>fileInput.current?.click()} className="text-xs rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 font-medium">Upload original file</button><span className="text-xs text-zinc-500">{isLiveConnected?'Destination: your Google Drive':'Destination: local browser storage'}</span></div>
         {/* Action bar & Breadcrumbs */}
         <div className="mt-4 flex flex-col md:flex-row md:items-center justify-between gap-3 pt-3 border-t border-zinc-800/80">
           {/* Breadcrumb nav */}
@@ -363,13 +392,13 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
             <Folder className="w-12 h-12 text-zinc-700 mb-3 stroke-1" />
             <h3 className="text-sm font-medium text-zinc-300">No documents in this folder</h3>
             <p className="text-xs text-zinc-500 mt-1 max-w-sm">
-              Send a document via the WhatsApp interface or click "Upload Document" to automatically organize files into Google Drive.
+              Attach a file in the Assistant tab, or create a text document here. Files are saved to Google Drive only while you are connected.
             </p>
             <button
               onClick={() => setIsUploadOpen(true)}
               className="mt-4 text-xs px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200"
             >
-              Upload Sample File
+              Create a text document
             </button>
           </div>
         ) : (
@@ -414,7 +443,7 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
                     <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
                       {!item.isFolder && (
                         <button
-                          onClick={() => setPreviewDoc(item)}
+                          onClick={() => preview(item)}
                           title="Preview & RAG chunks"
                           className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800"
                         >
@@ -451,16 +480,11 @@ export const GoogleDriveExplorer: React.FC<GoogleDriveExplorerProps> = ({
                 {!item.isFolder && (
                   <div className="mt-3 pt-2.5 border-t border-zinc-800/60 flex items-center justify-between">
                     <span className="text-[10px] text-emerald-400 flex items-center gap-1">
-                      <FileCheck className="w-3 h-3" /> Indexed in RAG
+                      <FileCheck className="w-3 h-3" /> {ragService.getAllDocuments().some(d=>d.driveFileId===item.id)?'Indexed locally':'Not indexed · open to read'}
                     </span>
                     {onSelectDocumentForChat && (
                       <button
-                        onClick={() =>
-                          onSelectDocumentForChat({
-                            title: item.name,
-                            content: item.content || '',
-                          })
-                        }
+                        onClick={() => ask(item)}
                         className="text-[10px] font-medium text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
                       >
                         <Sparkles className="w-3 h-3" /> Ask Assistant

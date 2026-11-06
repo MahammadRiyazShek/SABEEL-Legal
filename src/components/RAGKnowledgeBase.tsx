@@ -75,7 +75,7 @@ export const RAGKnowledgeBase: React.FC = () => {
             <div>
               <h2 className="text-xl font-bold tracking-tight text-white">RAG Document Knowledge Base</h2>
               <p className="text-xs text-zinc-400 mt-0.5">
-                Chunks, semantic embeddings, and vector indexing for question answering across Google Drive files.
+                Browser-local text chunks and keyword-ranked document search. No vector database or cloud sync is configured.
               </p>
             </div>
           </div>

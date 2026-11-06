@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
-    "build": "vite build && rm -rf docs && cp -r dist docs && cp dist/index.html dist/404.html && cp dist/index.html docs/404.html && touch docs/.nojekyll dist/.nojekyll",
+    "build": "node scripts/build.mjs",
     "start": "tsx server.ts",
     "preview": "vite preview",
-    "test": "tsx --test src/utils/*.test.ts",
-    "clean": "rm -rf dist docs server.js",
+    "test": "tsx --test src/utils/*.test.ts src/services/*.test.ts",
+    "clean": "rm -rf dist docs assets server.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {

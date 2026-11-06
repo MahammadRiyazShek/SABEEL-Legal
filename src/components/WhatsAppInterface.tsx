@@ -37,6 +37,8 @@ import { memoryService } from '../services/memoryService';
 import { driveService } from '../services/driveService';
 import { classifyDocumentForDrive } from '../utils/driveOrganizer';
 import { processClientSideAssistant } from '../services/clientAssistant';
+import { apiRequest, backendOrigin, personalKey } from '../services/connection';
+import { useConnections } from '../services/useConnections';
 
 interface WhatsAppInterfaceProps {
   onOpenDriveTab?: () => void;
@@ -62,12 +64,15 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
   const [messages, setMessages] = useState<WhatsAppMessage[]>(() => {
     try {
       const stored = localStorage.getItem('assistant_whatsapp_messages');
-      return stored ? JSON.parse(stored) : INITIAL_MESSAGES;
+      const parsed=stored?JSON.parse(stored):null;
+      return Array.isArray(parsed)&&parsed.every(m=>m&&typeof m.text==='string'&&typeof m.id==='string')?parsed:INITIAL_MESSAGES;
     } catch {
       return INITIAL_MESSAGES;
     }
   });
 
+  const connections = useConnections();
+  const [chatSearch,setChatSearch]=useState('');
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isAttachOpen, setIsAttachOpen] = useState(false);
@@ -99,7 +104,7 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
 
   const handleSendMessage = async (textToSend?: string, attachedMedia?: WhatsAppMessage['media'], mediaContent?: string) => {
     const text = (textToSend !== undefined ? textToSend : inputText).trim();
-    if (!text && !attachedMedia) return;
+    if (isProcessing || (!text && !attachedMedia)) return;
 
     const userMsgId = `msg_user_${Date.now()}`;
     const userMsg: WhatsAppMessage = {
@@ -133,6 +138,7 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
           attachedMedia.mimeType,
           mediaContent
         );
+        setMessages(prev=>prev.map(m=>m.id===userMsgId?{...m,text:m.text+`\n[${driveRes.isLive ? 'Saved to Google Drive' : 'Saved locally in this browser only'}: ${driveRes.targetFolder}]`}:m));
         if (!mediaContent.startsWith('data:')) {
           ragService.indexDocument(
             attachedMedia.filename,
@@ -147,7 +153,8 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
       let assistantMsg: WhatsAppMessage;
 
       try {
-        const res = await fetch('/api/chat', {
+        if (!backendOrigin()) throw new Error('No backend configured');
+        const data = await apiRequest('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -170,11 +177,6 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
           }),
         });
 
-        if (!res.ok) {
-          throw new Error(`Server returned ${res.status}`);
-        }
-
-        const data = await res.json();
         assistantMsg = {
           id: `msg_asst_${Date.now()}`,
           sender: 'assistant',
@@ -186,7 +188,8 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
         };
       } catch (serverErr) {
         // GitHub Pages or static hosting fallback: Run client-side assistant
-        const clientApiKey = localStorage.getItem('assistant_custom_gemini_key') || undefined;
+        if (backendOrigin() && !personalKey()) throw serverErr;
+        const clientApiKey = personalKey() || undefined;
         const clientData = await processClientSideAssistant(
           text,
           attachedMedia
@@ -216,7 +219,7 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
         return [...updated, assistantMsg];
       });
     } catch (err: any) {
-      console.error('Failed to get assistant response:', err);
+      setMessages(prev=>[...prev,{id:`error_${Date.now()}`,sender:'assistant',timestamp:new Date().toISOString(),status:'sent',text:`Request failed: ${err.message || 'Unknown error'}. Open Connections to check the setup. No AI response or WhatsApp delivery is confirmed.`}]);
     } finally {
       setIsProcessing(false);
     }
@@ -226,11 +229,12 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > 15 * 1024 * 1024) { alert('Please choose a file smaller than 15 MB.'); return; }
     const reader = new FileReader();
     reader.onload = async event => {
       const content = event.target?.result as string;
       const media = {
-        type: 'document' as const,
+        type: (file.type.startsWith('image/') ? 'image' : file.type.startsWith('audio/') ? 'audio' : 'document') as 'document' | 'image' | 'audio',
         filename: file.name,
         mimeType: file.type || 'text/plain',
         fileSize: `${Math.round(file.size / 1024)} KB`,
@@ -252,7 +256,7 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
     let fileSize = '350 KB';
 
     if (sampleType === 'invoice') {
-      filename = 'AWS_Infrastructure_Billing_Nov2026.pdf';
+      filename = 'Example_Invoice.txt';
       fileSize = '180 KB';
       content = `AMAZON WEB SERVICES INVOICE
 Invoice Number: 98124912
@@ -267,7 +271,7 @@ Taxes: $51.62
 Total Amount Due: $789.12
 Due Date: November 25, 2026`;
     } else if (sampleType === 'contract') {
-      filename = 'Non_Disclosure_Agreement_Mutual_2026.pdf';
+      filename = 'Example_Agreement.txt';
       fileSize = '420 KB';
       content = `MUTUAL NON-DISCLOSURE AGREEMENT
 This Agreement is entered into on Nov 05, 2026 by and between TechVentures Ltd and Partner Corp.
@@ -276,20 +280,20 @@ This Agreement is entered into on Nov 05, 2026 by and between TechVentures Ltd a
 3. Standard of Care: High degree of reasonable care standard.
 4. Jurisdiction: Singapore Law with expedited arbitration.`;
     } else {
-      filename = 'Market_Research_LLM_Agents_2026.pdf';
+      filename = 'Example_Report.txt';
       fileSize = '610 KB';
-      content = `EXECUTIVE BRIEF: THE STATE OF WHATSAPP ENTERPRISE AI AGENTS 2026
-Key Takeaways:
-- Over 74% of enterprise field teams now manage cloud document filing directly via WhatsApp conversational messaging.
-- Average retrieval latency with RAG embeddings on Gemini 3.8 Flash dropped under 250 milliseconds.
-- Storage categorization into Google Drive eliminates lost invoices and accelerates accounting audits by 3.8x.`;
+      content = `EXAMPLE PROJECT REPORT — FICTIONAL TEST DATA
+Objective: Organize uploaded documents and make them searchable.
+Tasks: Connect Google Drive, upload a text file, then ask a question about it.
+Risks: An unconfigured backend cannot answer AI questions or receive WhatsApp events.
+Next action: Validate the backend and OAuth configuration before use.`;
     }
 
     const media = {
       type: 'document' as const,
       filename,
-      mimeType: 'application/pdf',
-      fileSize,
+      mimeType: 'text/plain',
+      fileSize: `${new Blob([content]).size} bytes`,
       pageCount: sampleType === 'report' ? 4 : 2,
     };
 
@@ -345,7 +349,10 @@ Key Takeaways:
             <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search or start new chat"
+              aria-label="Search conversation"
+              value={chatSearch}
+              onChange={e=>setChatSearch(e.target.value)}
+              placeholder="Search this conversation"
               className="w-full text-xs pl-9 pr-3 py-1.5 rounded-lg bg-[#202c33] text-zinc-200 placeholder-zinc-500 focus:outline-hidden"
             />
           </div>
@@ -368,7 +375,7 @@ Key Takeaways:
             <div className="flex-1 min-w-0">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold text-zinc-100 truncate">DriveGenie AI Assistant</span>
-                <span className="text-[11px] text-emerald-400 font-medium">Online</span>
+                <span className="text-[11px] text-emerald-400 font-medium">{connections.checking ? 'Checking…' : connections.aiLabel}</span>
               </div>
               <div className="text-xs text-zinc-400 truncate mt-0.5 flex items-center gap-1">
                 <CheckCheck className="w-3.5 h-3.5 text-blue-400 shrink-0" />
@@ -382,26 +389,26 @@ Key Takeaways:
           {/* Connected Services Info card in chat list */}
           <div className="p-4 m-3 rounded-xl bg-[#202c33] border border-zinc-700/60 space-y-2 text-xs">
             <div className="font-semibold text-zinc-200 flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-emerald-400">
-              <ShieldCheck className="w-3.5 h-3.5" /> Connected Integrations
+              <ShieldCheck className="w-3.5 h-3.5" /> Integration status
             </div>
             <div className="space-y-1.5 text-zinc-400 text-[11px]">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <HardDrive className="w-3.5 h-3.5 text-blue-400" /> Google Drive
                 </span>
-                <span className="text-emerald-400 font-medium">Ready</span>
+                <span className="text-emerald-400 font-medium">{connections.drive ? 'Signed in' : 'Not connected'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <Globe className="w-3.5 h-3.5 text-cyan-400" /> Google Search
                 </span>
-                <span className="text-emerald-400 font-medium">Active</span>
+                <span className="text-emerald-400 font-medium">{connections.health?.geminiConfigured ? 'Available via backend' : 'Not connected'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <Brain className="w-3.5 h-3.5 text-purple-400" /> Long-Term Memory
                 </span>
-                <span className="text-emerald-400 font-medium">Synced</span>
+                <span className="text-emerald-400 font-medium">This browser only</span>
               </div>
             </div>
           </div>
@@ -420,11 +427,11 @@ Key Takeaways:
               <div className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
                 DriveGenie AI
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  Gemini 3.8 Flash
+                  {connections.aiLabel}
                 </span>
               </div>
               <div className="text-[11px] text-zinc-400">
-                online • Google Drive Connected • WhatsApp Webhook Ready
+                {connections.drive ? 'Drive signed in' : 'Drive not connected'} · {connections.whatsapp ? 'WhatsApp configured · verify in Meta' : 'WhatsApp not connected'}
               </div>
             </div>
           </div>
@@ -462,11 +469,11 @@ Key Takeaways:
           {/* Encryption notice banner */}
           <div className="flex justify-center">
             <div className="px-3.5 py-1.5 rounded-lg bg-[#182229] border border-zinc-800 text-[11px] text-amber-300/80 max-w-md text-center shadow-xs">
-              🔒 Messages and file streams are encrypted. Your Google Drive files are strictly private to your authorized session.
+              Private workspace · Chat and document search are stored in this browser. Connected AI receives your messages and selected context. This is not an end-to-end encrypted WhatsApp client.
             </div>
           </div>
 
-          {messages.map(msg => {
+          {messages.filter(m=>!chatSearch || m.text.toLowerCase().includes(chatSearch.toLowerCase())).map(msg => {
             const isMe = msg.sender === 'user';
             return (
               <div
@@ -497,7 +504,7 @@ Key Takeaways:
 
                       <div className="shrink-0 flex items-center gap-1.5">
                         <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                          <HardDrive className="w-3 h-3" /> Drive
+                          <HardDrive className="w-3 h-3" /> Attachment
                         </span>
                       </div>
                     </div>
@@ -505,24 +512,14 @@ Key Takeaways:
 
                   {/* Message body with WhatsApp markdown formatting */}
                   <div className="whitespace-pre-wrap break-words">
-                    {msg.text.split('\n').map((line, i) => {
-                      // bold text replacement e.g. *bold*
-                      const formatted = line.replace(/\*([^*]+)\*/g, '<strong>$1</strong>');
-                      return (
-                        <p
-                          key={i}
-                          dangerouslySetInnerHTML={{ __html: formatted }}
-                          className={i > 0 ? 'mt-1' : ''}
-                        />
-                      );
-                    })}
+                    {msg.text.split('\n').map((line,i)=><p key={i} className={i>0?'mt-1':''}>{line.split(/(\*[^*]+\*)/g).map((part,j)=>part.startsWith('*')&&part.endsWith('*')?<strong key={j}>{part.slice(1,-1)}</strong>:part)}</p>)}
                   </div>
 
                   {/* Tool execution steps badge */}
                   {msg.toolCalls && msg.toolCalls.length > 0 && (
                     <div className="mt-3 pt-2 border-t border-white/10 space-y-1.5">
                       <div className="text-[10px] uppercase font-bold text-emerald-400 flex items-center gap-1">
-                        <Sparkles className="w-3 h-3" /> Connected Tool Automations
+                        <Sparkles className="w-3 h-3" /> Request activity
                       </div>
                       {msg.toolCalls.map((tool, idx) => (
                         <div
@@ -541,13 +538,13 @@ Key Takeaways:
                   {msg.groundingSources && msg.groundingSources.length > 0 && (
                     <div className="mt-3 pt-2 border-t border-white/10">
                       <div className="text-[10px] font-semibold text-cyan-300 uppercase mb-1 flex items-center gap-1">
-                        <Globe className="w-3 h-3" /> Verified Web Citations
+                        <Globe className="w-3 h-3" /> Web sources
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {msg.groundingSources.map((source, sIdx) => (
                           <a
                             key={sIdx}
-                            href={source.url}
+                            href={/^https?:\/\//i.test(source.url) ? source.url : undefined}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md bg-cyan-950/40 border border-cyan-500/30 text-cyan-200 hover:text-white hover:border-cyan-400 transition-colors"
@@ -588,7 +585,7 @@ Key Takeaways:
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse delay-150" />
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse delay-300" />
               </div>
-              <span className="text-[11px] text-emerald-300 font-medium">DriveGenie is executing tools & typing...</span>
+              <span className="text-[11px] text-emerald-300 font-medium">Processing your request…</span>
             </div>
           )}
 
@@ -605,7 +602,7 @@ Key Takeaways:
             'What is the notice period in my signed contract?',
             'Research latest AI benchmarks on Google',
             'Remember: Fiscal year ends in December',
-            'What folders do I have in Google Drive?',
+            'How do I connect Google Drive?',
           ].map((prompt, i) => (
             <button
               key={i}
@@ -626,7 +623,7 @@ Key Takeaways:
               ref={fileInputRef}
               onChange={handleFileUpload}
               className="hidden"
-              accept=".pdf,.txt,.doc,.docx,.csv,.json"
+              accept=".pdf,.txt,.md,.doc,.docx,.csv,.json,image/*,audio/*"
             />
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -639,19 +636,19 @@ Key Takeaways:
               onClick={() => sendQuickSampleDocument('invoice')}
               className="text-xs px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
             >
-              📄 AWS Invoice (Nov 2026)
+              📄 Example invoice · text
             </button>
             <button
               onClick={() => sendQuickSampleDocument('contract')}
               className="text-xs px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
             >
-              📝 NDA Agreement
+              📝 Example agreement · text
             </button>
             <button
               onClick={() => sendQuickSampleDocument('report')}
               className="text-xs px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700"
             >
-              📊 Market Research PDF
+              📊 Example report · text
             </button>
             <button
               onClick={() => setIsAttachOpen(false)}
@@ -695,15 +692,12 @@ Key Takeaways:
               disabled={isProcessing}
               className="p-2 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white transition-colors shadow-xs"
             >
-              <Send className="w-5 h-5" />
+              <Send aria-label="Send message" className="w-5 h-5" />
             </button>
           ) : (
             <button
-              onClick={() => {
-                setIsPlayingAudio(prev => !prev);
-                handleSendMessage('🎤 Voice note simulated: "DriveGenie, please search Google Drive for any signed agreements."');
-              }}
-              title="Send Voice Note"
+              disabled
+              title="Voice recording is not enabled. Attach an audio file instead."
               className="p-2 rounded-full text-zinc-400 hover:bg-zinc-700/60 hover:text-zinc-200 transition-colors"
             >
               <Mic className="w-5 h-5" />

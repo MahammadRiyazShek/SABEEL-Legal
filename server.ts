@@ -8,11 +8,11 @@ import express, { Request, Response } from 'express';
 import { createHmac, timingSafeEqual } from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { handleAssistantChat } from './src/server/geminiHandler';
+import { handleAssistantChat } from './src/server/geminiHandler.ts';
 import {
   verifyWebhookSubscription,
   processIncomingWhatsAppMessage,
-} from './src/server/whatsappWebhookHandler';
+} from './src/server/whatsappWebhookHandler.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,6 +20,19 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
+app.disable('x-powered-by');
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('Referrer-Policy','strict-origin-when-cross-origin');
+  const origin=req.get('origin');
+  const allowed=(process.env.ALLOWED_ORIGINS || 'https://mahammadriyazshek.github.io,http://localhost:3000,http://127.0.0.1:3000').split(',').map(v=>v.trim());
+  if(origin && allowed.includes(origin)){
+    res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');
+    res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers','Content-Type,X-Assistant-Token');
+  } else if(origin && req.path.startsWith('/api/')) {res.status(403).json({error:'Origin not allowed. Add your dashboard origin to ALLOWED_ORIGINS.'});return;}
+  if(req.method==='OPTIONS'){res.sendStatus(204);return;}next();
+});
 app.use(express.json({
   limit: '25mb',
   verify: (req, _res, buffer) => {
@@ -37,12 +50,25 @@ app.get('/api/health', (_req: Request, res: Response) => {
     geminiConfigured: !!process.env.GEMINI_API_KEY,
     whatsappConfigured: !!(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID),
     webhookSignatureConfigured: !!process.env.META_APP_SECRET,
+    whatsappVerifyConfigured: !!process.env.WHATSAPP_VERIFY_TOKEN,
+    model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     timestamp: new Date().toISOString(),
   });
 });
 
 // Primary Assistant Chat API (calls Gemini server-side)
+const rateWindows = new Map<string,{start:number,count:number}>();
 app.post('/api/chat', async (req: Request, res: Response) => {
+  const token=process.env.DASHBOARD_API_TOKEN;
+  if(process.env.NODE_ENV==='production' && !token){res.status(503).json({error:'Set DASHBOARD_API_TOKEN on the backend before enabling public AI requests.'});return;}
+  if(token){const a=Buffer.from(req.get('x-assistant-token')||'');const b=Buffer.from(token);if(a.length!==b.length||!timingSafeEqual(a,b)){res.status(401).json({error:'Invalid dashboard access token. Enter it in Connections.'});return;}}
+  const key=req.ip||'unknown';const now=Date.now();
+  for(const [id,entry] of rateWindows)if(now-entry.start>60000)rateWindows.delete(id);
+  const window=rateWindows.get(key)||{start:now,count:0};window.count++;rateWindows.set(key,window);
+  if(window.count>30){res.status(429).json({error:'Too many requests. Wait one minute.'});return;}
+  if(!req.body || typeof req.body.message!=='string' || req.body.message.length>50000 || (!req.body.message.trim()&&!req.body.media)){res.status(400).json({error:'Provide a message up to 50,000 characters or an attachment.'});return;}
+  if(!process.env.GEMINI_API_KEY){res.status(503).json({error:'GEMINI_API_KEY is not configured on this backend.'});return;}
+
   try {
     const result = await handleAssistantChat(req.body);
     res.json(result);
@@ -100,6 +126,8 @@ app.post('/api/whatsapp/webhook', async (req: Request, res: Response) => {
   }
 });
 
+app.use('/api', (_req,res)=>{res.status(404).json({error:'API route not found.'});});
+
 // Serve static frontend assets when in production
 const distPath = path.join(__dirname, 'dist');
 app.use(express.static(distPath));
@@ -110,7 +138,7 @@ app.get('*', (_req: Request, res: Response) => {
 });
 
 // Only start listening directly if not run inside Vite dev server
-if (process.env.NODE_ENV === 'production' || !process.env.VITE_DEV) {
+if (!process.env.VITE_DEV) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`WhatsApp AI Drive Assistant server running on port ${PORT}`);
   });

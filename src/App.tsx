@@ -20,6 +20,7 @@ import { GoogleDriveExplorer } from './components/GoogleDriveExplorer';
 import { RAGKnowledgeBase } from './components/RAGKnowledgeBase';
 import { MemoryInspector } from './components/MemoryInspector';
 import { CloudDeploymentModal } from './components/CloudDeploymentModal';
+import { ragService } from './services/ragService';
 import { WebhookSimulator } from './components/WebhookSimulator';
 
 export default function App() {
@@ -29,6 +30,7 @@ export default function App() {
   const [chatInitialPrompt, setChatInitialPrompt] = useState<string>('');
 
   const handleSelectDocForChat = (doc: { title: string; content: string }) => {
+    if(doc.content)ragService.indexDocument(doc.title,doc.content);
     setChatInitialPrompt(`Please analyze this document from my Google Drive: "${doc.title}"`);
     setActiveTab('chat');
   };
@@ -36,7 +38,7 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen w-screen bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
       {/* Top Application Bar */}
-      <header className="h-14 border-b border-zinc-800 bg-zinc-900/90 px-4 sm:px-6 flex items-center justify-between shrink-0 z-30 backdrop-blur-md">
+      <header className="min-h-14 flex-wrap gap-2 py-2 border-b border-zinc-800 bg-zinc-900/90 px-4 sm:px-6 flex items-center justify-between shrink-0 z-30 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-zinc-950 font-bold shadow-xs">
             <Bot className="w-5 h-5" />
@@ -62,7 +64,7 @@ export default function App() {
             }`}
           >
             <MessageSquare className="w-3.5 h-3.5" />
-            <span>WhatsApp</span>
+            <span>Assistant</span>
           </button>
 
           <button
@@ -122,7 +124,7 @@ export default function App() {
             }`}
           >
             <Cloud className="w-3.5 h-3.5" />
-            <span>Cloud Deployment</span>
+            <span>Connections</span>
           </button>
         </nav>
       </header>

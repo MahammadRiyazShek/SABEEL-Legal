@@ -16,8 +16,9 @@ import {
 // Import the auto-provisioned configuration
 import firebaseConfig from '../../firebase-applet-config.json';
 
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-export const auth = getAuth(app);
+let config: any = firebaseConfig;
+try { config = JSON.parse(localStorage.getItem('drivegenie_firebase_config') || 'null') || firebaseConfig; } catch {}
+export const auth = config.apiKey && config.authDomain && config.projectId ? getAuth(!getApps().length ? initializeApp(config) : getApp()) : null;
 
 const provider = new GoogleAuthProvider();
 provider.addScope('https://www.googleapis.com/auth/drive');
@@ -28,12 +29,14 @@ provider.setCustomParameters({
 
 // In-memory access token cache (NEVER put in localStorage/sessionStorage)
 let cachedAccessToken: string | null = null;
+let tokenExpiresAt = 0;
 let isSigningIn = false;
 
 export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  if (!auth) { onAuthFailure?.(); return () => {}; }
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       if (cachedAccessToken) {
@@ -51,6 +54,7 @@ export const initAuth = (
 
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
   try {
+    if (!auth) throw new Error('Google Drive is not configured. Open Connections and add your Firebase web configuration.');
     isSigningIn = true;
     const result = await signInWithPopup(auth, provider);
     const credential = GoogleAuthProvider.credentialFromResult(result);
@@ -58,6 +62,8 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
       throw new Error('No access token returned from Google sign-in credential');
     }
     cachedAccessToken = credential.accessToken;
+    tokenExpiresAt = Date.now() + 55 * 60 * 1000;
+    window.dispatchEvent(new Event('connections-changed'));
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error) {
     console.error('Google sign-in error:', error);
@@ -68,16 +74,19 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
+  if (cachedAccessToken && Date.now() >= tokenExpiresAt) { cachedAccessToken = null; window.dispatchEvent(new Event('connections-changed')); }
   return cachedAccessToken;
 };
 
 export const setMemoryAccessToken = (token: string | null) => {
   cachedAccessToken = token;
+  tokenExpiresAt = Date.now() + 55 * 60 * 1000;
 };
 
 export const logout = async () => {
-  await signOut(auth);
+  if (auth) await signOut(auth);
   cachedAccessToken = null;
+  window.dispatchEvent(new Event('connections-changed'));
 };
 
 export const switchAccount = async (): Promise<{ user: User; accessToken: string } | null> => {
@@ -86,5 +95,5 @@ export const switchAccount = async (): Promise<{ user: User; accessToken: string
 };
 
 export const getCurrentUser = (): User | null => {
-  return auth.currentUser;
+  return auth?.currentUser || null;
 };

@@ -183,43 +183,6 @@ export async function handleAssistantChat(
     };
   } catch (error: any) {
     console.error('Gemini API execution error:', error);
-
-    // If RAG context is available, extract direct answer from matching document chunks
-    if (ragContext && ragContext.includes('[Source')) {
-      const sourceMatch = ragContext.match(/\[Source 1: ([^\]]+)\]\n([\s\S]*?)(?=\n\[Source|$)/);
-      const docName = sourceMatch ? sourceMatch[1] : 'Google Drive Document';
-      const excerpt = sourceMatch ? sourceMatch[2].trim() : '';
-
-      return {
-        text: `*Document Retrieval Answer (Grounded in Google Drive)* 📄\n\nBased on *${docName}*:\n\n${excerpt.slice(0, 600)}\n\n_Note: Gemini API returned a quota limit (${error.message?.includes('429') ? 'Rate limit / 429' : 'Service notice'}), so this response was retrieved directly from your RAG knowledge base chunks!_`,
-        toolCalls: [
-          ...toolCalls,
-          {
-            toolName: 'rag_local_fallback',
-            status: 'success',
-            summary: `Retrieved matching facts directly from ${docName}`,
-          },
-        ],
-      };
-    }
-
-    if (media) {
-      return {
-        text: `*Document received* 📄\n\n• *Filename:* ${media.filename}\n• *MIME:* ${media.mimeType}\n\nI could not analyze or store this file because the AI service is unavailable. Please upload it from the dashboard while signed in to Google Drive, or try again later.`,
-        toolCalls,
-      };
-    }
-
-    return {
-      text: `*DriveGenie Assistant Notice*\n\nI processed your request, but Gemini API returned: ${error.message?.includes('429') ? 'Resource quota exhausted (429). Please select a billing-enabled key in Settings > Secrets if needed.' : error.message}.\n\nYour Google Drive files, RAG search, and Long-Term Memory stores remain fully operational in the dashboard tabs!`,
-      toolCalls: [
-        ...toolCalls,
-        {
-          toolName: 'gemini_api',
-          status: 'failed',
-          summary: `API error: ${error.message?.slice(0, 80)}`,
-        },
-      ],
-    };
+    throw new Error(error.message?.includes('429') ? 'Gemini quota or rate limit exceeded. Check your Google API billing and retry later.' : `Gemini could not answer: ${error.message || 'Unknown API error'}`);
   }
 }

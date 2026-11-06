@@ -10,35 +10,7 @@ import {
   buildMemoryPromptSection,
 } from '../utils/memory';
 
-const INITIAL_MEMORIES: MemoryItem[] = [
-  {
-    id: 'mem_init_1',
-    category: 'instruction',
-    key: 'auto_file_organization',
-    value: 'Always categorize uploaded documents into appropriate Drive subfolders (Financial, Legal, Reports, Personal)',
-    confidence: 1.0,
-    createdAt: '2026-10-10T12:00:00Z',
-    updatedAt: '2026-10-10T12:00:00Z',
-  },
-  {
-    id: 'mem_init_2',
-    category: 'preference',
-    key: 'response_style',
-    value: 'Keep WhatsApp messages clean and structured with emojis, bold headers, and key actionable bullet points',
-    confidence: 0.95,
-    createdAt: '2026-10-12T09:00:00Z',
-    updatedAt: '2026-10-12T09:00:00Z',
-  },
-  {
-    id: 'mem_init_3',
-    category: 'fact',
-    key: 'user_organization',
-    value: 'Apex AI Solutions / TechVentures',
-    confidence: 0.9,
-    createdAt: '2026-10-14T15:30:00Z',
-    updatedAt: '2026-10-14T15:30:00Z',
-  },
-];
+const INITIAL_MEMORIES: MemoryItem[] = [];
 
 class MemoryService {
   private memories: MemoryItem[] = [];

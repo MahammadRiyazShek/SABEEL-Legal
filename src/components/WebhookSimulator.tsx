@@ -82,14 +82,7 @@ export const WebhookSimulator: React.FC = () => {
     setLastRequestPayload(metaPayload);
 
     try {
-      const res = await fetch('/api/whatsapp/webhook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(metaPayload),
-      });
-
-      const data = await res.json();
-      setLastResponsePayload(data);
+      setLastResponsePayload({mode:'local-payload-inspection', sent:false, message:'Payload built locally only. No request was sent and no WhatsApp reply was delivered. Real production events must come from Meta with a valid signature.', payload:metaPayload});
     } catch (err: any) {
       setLastResponsePayload({ error: err.message });
     } finally {
@@ -107,7 +100,7 @@ export const WebhookSimulator: React.FC = () => {
           <div>
             <h2 className="text-xl font-bold tracking-tight text-white">Meta WhatsApp Webhook Simulator</h2>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Simulate incoming POST webhook events from Meta WhatsApp Cloud API and inspect the automated agent reply.
+              Inspect an example Meta payload locally. This tool does not send messages or bypass webhook signatures.
             </p>
           </div>
         </div>

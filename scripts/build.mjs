@@ -1,0 +1,14 @@
+import { build } from 'vite';
+import { cp, mkdir, rename, writeFile, rm } from 'node:fs/promises';
+await build();
+await rename('dist/index.source.html', 'dist/index.html');
+await cp('dist/index.html', 'dist/404.html');
+await writeFile('dist/.nojekyll', '');
+await rm('docs', {recursive:true,force:true});
+await cp('dist', 'docs', {recursive:true});
+await rm('assets', {recursive:true,force:true});
+await cp('dist/assets', 'assets', {recursive:true});
+await cp('dist/index.html', 'index.html');
+await cp('dist/404.html', '404.html');
+await writeFile('.nojekyll', '');
+console.log('Built root, docs and dist: all three contain compiled JavaScript, never raw TSX.');

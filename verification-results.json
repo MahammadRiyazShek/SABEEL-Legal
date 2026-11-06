@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "results": [
+    "live/ compiled app loads",
+    "live/docs/ compiled app loads",
+    "live/dist/ compiled app loads",
+    "Pages URL rejected as backend",
+    "Personal AI transport with mocked Google response and session-only key",
+    "Google quota failure displayed, not faked",
+    "Chat HTML is escaped; injected script does not run",
+    "Disallowed cross-origin backend request rejected",
+    "Configured backend health response recognized",
+    "Actual file upload saves locally; missing Google configuration is visible",
+    "Uploaded text indexed in local search",
+    "Mobile navigation and settings fit 390px viewport",
+    "No uncaught browser runtime errors",
+    "Express health, token auth, missing-key errors, Meta GET verification, unsigned webhook rejection, API 404 and CORS all passed"
+  ],
+  "providerCalls": "mocked Google responses only; no real Gemini, Google OAuth or Meta delivery tested"
+}

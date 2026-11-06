@@ -4,11 +4,12 @@
  * and conversational answers even in purely static environments without an Express server.
  */
 
-import { ChatResponsePayload } from '../server/geminiHandler';
+import type { ChatResponsePayload } from '../server/geminiHandler';
 import { ragService } from './ragService';
 import { memoryService } from './memoryService';
 import { driveService } from './driveService';
 import { classifyDocumentForDrive } from '../utils/driveOrganizer';
+import { readSettings } from './connection';
 
 export async function processClientSideAssistant(
   message: string,
@@ -39,7 +40,7 @@ export async function processClientSideAssistant(
     toolCalls.push({
       toolName: 'rag_document_search',
       status: 'success',
-      summary: `Matched ${ragResult.retrievedChunks.length} chunks from Google Drive knowledge base`,
+      summary: `Matched ${ragResult.retrievedChunks.length} chunks from local knowledge base`,
     });
   }
 
@@ -49,48 +50,23 @@ export async function processClientSideAssistant(
     toolCalls.push({
       toolName: 'google_drive_organizer',
       status: 'success',
-      summary: `Routed to '${classification.folderName}' (${classification.folderCategory})`,
+      summary: `Suggested category: '${classification.folderName}' (not proof of upload)`,
     });
   }
 
-  // 4. If user configured a client-side Gemini API key on GitHub Pages, call Gemini REST API
-  if (customApiKey && customApiKey.trim().length > 10) {
-    try {
-      toolCalls.push({
-        toolName: 'gemini_client_api',
-        status: 'calling',
-        summary: 'Calling Gemini API directly via client API key',
-      });
-
-      const promptContext = `${memoryResult.promptSection}\n${ragResult.contextPrompt}\nUser Message: ${message}`;
-      const res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(
-          customApiKey.trim()
-        )}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: promptContext }] }],
-          }),
-        }
-      );
-
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) {
-          toolCalls.push({
-            toolName: 'gemini_client_api',
-            status: 'success',
-            summary: 'Received response from Gemini 2.5 Flash',
-          });
-          return { text, toolCalls };
-        }
-      }
-    } catch (err: any) {
-      console.warn('Client-side Gemini API call failed, falling back to local RAG synthesis:', err);
+  // Explicit personal mode: send only to Google; errors must never look like AI success.
+  if (customApiKey?.trim()) {
+    const parts:any[] = [{text:`You are DriveGenie. Answer only from provided context or your knowledge. Never claim you uploaded a file, sent WhatsApp messages or searched the internet.\n${memoryResult.promptSection}\n${ragResult.contextPrompt}\nUser: ${message}`}];
+    if (media?.content) {
+      const match=media.content.match(/^data:([^;,]+);base64,([\s\S]*)$/);
+      parts.push(match ? {inlineData:{mimeType:match[1],data:match[2]}} : {text:`Attachment ${media.filename}:\n${media.content}`});
     }
+    const res=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${readSettings().model}:generateContent`,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':customApiKey.trim()},body:JSON.stringify({contents:[{role:'user',parts}]}),signal:AbortSignal.timeout(90000)});
+    const data=await res.json();
+    if(!res.ok)throw new Error(data.error?.message||`Gemini failed (${res.status})`);
+    const text=(data.candidates?.[0]?.content?.parts||[]).map((p:any)=>p.text||'').join('');
+    if(!text)throw new Error('Gemini returned no text. The request may have been blocked.');
+    return {text,toolCalls:[...toolCalls,{toolName:'gemini_client_api',status:'success',summary:'Response received directly from Google Gemini.'}]};
   }
 
   // 5. Intelligent Client-Side Synthesis (100% static GitHub Pages compatible)
@@ -113,7 +89,7 @@ export async function processClientSideAssistant(
     const topChunk = ragResult.retrievedChunks[0];
     const otherDocs = Array.from(new Set(ragResult.retrievedChunks.map(c => c.docTitle)));
 
-    let answerText = `*Document Retrieval Answer (Grounded in Google Drive)* 📄\n\n`;
+    let answerText = `*Local document search · not a generated AI answer* 📄\n\n`;
     answerText += `From *${topChunk.docTitle}* (Chunk #${topChunk.chunkIndex + 1}):\n\n`;
     answerText += `> "${topChunk.text}"\n\n`;
 
