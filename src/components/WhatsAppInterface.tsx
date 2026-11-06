@@ -48,63 +48,9 @@ const INITIAL_MESSAGES: WhatsAppMessage[] = [
   {
     id: 'msg_1',
     sender: 'assistant',
-    timestamp: '2026-11-05T09:00:00Z',
-    text: `*Hello! I'm DriveGenie*, your intelligent personal assistant on WhatsApp. 
-
-I can help you:
-• 📁 *Receive, organize & store documents* in Google Drive
-• 📄 *Retrieve and analyze* past files and contracts
-• 🧠 *Long-term memory* of your preferences and instructions
-• 🔍 *RAG-based search & Q&A* on your private files
-• 🌐 *Internet research & summarization* with Google Search
-
-Send me a document or ask a question to get started!`,
+    timestamp: new Date().toISOString(),
+    text: `*Welcome to DriveGenie.*\n\nConnect your Google Drive in the Drive tab, configure a Gemini key or backend for AI responses, or deploy this app with Meta credentials to receive live WhatsApp messages. This dashboard is not an actual WhatsApp client.`,
     status: 'read',
-  },
-  {
-    id: 'msg_2',
-    sender: 'user',
-    timestamp: '2026-11-05T09:02:00Z',
-    text: 'Here is our latest Cloud Hosting invoice for October.',
-    status: 'read',
-    media: {
-      type: 'document',
-      filename: 'Cloud_Hosting_Invoice_Oct2026.pdf',
-      mimeType: 'application/pdf',
-      fileSize: '240 KB',
-      pageCount: 1,
-      driveFileId: 'file_inv_001',
-    },
-  },
-  {
-    id: 'msg_3',
-    sender: 'assistant',
-    timestamp: '2026-11-05T09:02:05Z',
-    text: `*Invoice Processed & Stored in Google Drive!* ✅
-
-• *Vendor:* CloudScale Infrastructure Inc.
-• *Invoice #:* INV-9821 (Dated Oct 20, 2026)
-• *Subtotal:* $1,775.00
-• *VAT (10%):* $177.50
-• *Total Due:* *$1,952.50* (Paid in full via auto-debit)
-
-📁 *Google Drive Location:*
-Organized automatically into \`WhatsApp Assistant / Financial & Invoices\`
-
-⚡ *RAG Indexing:* Chunks indexed into your private knowledge base. You can now ask questions about this bill anytime!`,
-    status: 'read',
-    toolCalls: [
-      {
-        toolName: 'google_drive_organizer',
-        status: 'success',
-        summary: 'Classified & stored in "Financial & Invoices" folder',
-      },
-      {
-        toolName: 'rag_document_search',
-        status: 'success',
-        summary: 'Chunked and indexed into vector knowledge base',
-      },
-    ],
   },
 ];
 
@@ -187,13 +133,15 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
           attachedMedia.mimeType,
           mediaContent
         );
-        ragService.indexDocument(
-          attachedMedia.filename,
-          mediaContent,
-          attachedMedia.mimeType,
-          driveRes.file.id,
-          driveRes.file.category
-        );
+        if (!mediaContent.startsWith('data:')) {
+          ragService.indexDocument(
+            attachedMedia.filename,
+            mediaContent,
+            attachedMedia.mimeType,
+            driveRes.file.id,
+            driveRes.file.category
+          );
+        }
       }
 
       let assistantMsg: WhatsAppMessage;
@@ -209,7 +157,7 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
                   type: attachedMedia.type,
                   filename: attachedMedia.filename,
                   mimeType: attachedMedia.mimeType,
-                  content: mediaContent,
+                  content: mediaContent && mediaContent.length <= 22_000_000 ? mediaContent : undefined,
                 }
               : undefined,
             conversationHistory: messages.slice(-6).map(m => ({
@@ -290,7 +238,11 @@ export const WhatsAppInterface: React.FC<WhatsAppInterfaceProps> = ({
 
       await handleSendMessage(`Uploaded document: ${file.name}`, media, content);
     };
-    reader.readAsText(file);
+    if (file.type.startsWith('text/') || /\.(txt|md|csv|json|xml|html)$/i.test(file.name)) {
+      reader.readAsText(file);
+    } else {
+      reader.readAsDataURL(file);
+    }
     e.target.value = '';
   };
 

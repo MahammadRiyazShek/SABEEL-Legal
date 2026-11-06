@@ -40,6 +40,8 @@ function apiPlugin(): Plugin {
               status: 'healthy',
               service: 'whatsapp-ai-drive-assistant',
               geminiConfigured: !!process.env.GEMINI_API_KEY,
+              whatsappConfigured: !!(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID),
+              webhookSignatureConfigured: !!process.env.META_APP_SECRET,
               uptimeSeconds: Math.floor(process.uptime()),
               timestamp: new Date().toISOString(),
             })

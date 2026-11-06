@@ -5,6 +5,7 @@
 
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
+import { createHmac, timingSafeEqual } from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { handleAssistantChat } from './src/server/geminiHandler';
@@ -19,7 +20,12 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-app.use(express.json({ limit: '25mb' }));
+app.use(express.json({
+  limit: '25mb',
+  verify: (req, _res, buffer) => {
+    (req as Request & { rawBody?: Buffer }).rawBody = Buffer.from(buffer);
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 // Health check endpoint for Cloud Run
@@ -29,11 +35,13 @@ app.get('/api/health', (_req: Request, res: Response) => {
     service: 'whatsapp-ai-drive-assistant',
     uptimeSeconds: Math.floor(process.uptime()),
     geminiConfigured: !!process.env.GEMINI_API_KEY,
+    whatsappConfigured: !!(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID),
+    webhookSignatureConfigured: !!process.env.META_APP_SECRET,
     timestamp: new Date().toISOString(),
   });
 });
 
-// Primary Assistant Chat API (calls Gemini 3.8 Flash server-side)
+// Primary Assistant Chat API (calls Gemini server-side)
 app.post('/api/chat', async (req: Request, res: Response) => {
   try {
     const result = await handleAssistantChat(req.body);
@@ -50,7 +58,7 @@ app.get('/api/whatsapp/webhook', (req: Request, res: Response) => {
   const token = req.query['hub.verify_token'] as string;
   const challenge = req.query['hub.challenge'] as string;
 
-  const expectedToken = process.env.WHATSAPP_VERIFY_TOKEN || 'whatsapp_drive_genie_verify_token_2026';
+  const expectedToken = process.env.WHATSAPP_VERIFY_TOKEN;
   const verification = verifyWebhookSubscription(mode, token, challenge, expectedToken);
 
   if (verification.isValid && verification.challenge) {
@@ -62,6 +70,22 @@ app.get('/api/whatsapp/webhook', (req: Request, res: Response) => {
 
 // Meta WhatsApp Cloud API Webhook Receiver (POST)
 app.post('/api/whatsapp/webhook', async (req: Request, res: Response) => {
+  const appSecret = process.env.META_APP_SECRET;
+  const signature = req.get('x-hub-signature-256');
+  if (!appSecret && process.env.NODE_ENV === 'production') {
+    res.status(503).json({ error: 'META_APP_SECRET is required for production webhook verification.' });
+    return;
+  }
+  if (appSecret) {
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+    const expected = `sha256=${createHmac('sha256', appSecret).update(rawBody || Buffer.alloc(0)).digest('hex')}`;
+    const receivedBuffer = Buffer.from(signature || '');
+    const expectedBuffer = Buffer.from(expected);
+    if (receivedBuffer.length !== expectedBuffer.length || !timingSafeEqual(receivedBuffer, expectedBuffer)) {
+      res.status(401).json({ error: 'Invalid Meta webhook signature.' });
+      return;
+    }
+  }
   try {
     const result = await processIncomingWhatsAppMessage(
       req.body,

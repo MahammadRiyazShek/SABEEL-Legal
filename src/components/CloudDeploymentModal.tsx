@@ -27,7 +27,7 @@ export const CloudDeploymentModal: React.FC = () => {
   const [isTesting, setIsTesting] = useState(false);
   const [activeDeployTab, setActiveDeployTab] = useState<'github' | 'cloudrun'>('github');
 
-  // Client-side Gemini API key for GitHub Pages
+  // Optional browser key for static hosting; users should prefer the backend.
   const [customApiKey, setCustomApiKey] = useState<string>('');
   const [savedKeyNotice, setSavedKeyNotice] = useState<boolean>(false);
 
@@ -61,20 +61,12 @@ export const CloudDeploymentModal: React.FC = () => {
     setIsTesting(true);
     setTestResult(null);
     try {
-      const verifyToken = 'whatsapp_drive_genie_verify_token_2026';
-      const challenge = 'test_challenge_code_98234';
-      const res = await fetch(
-        `/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=${verifyToken}&hub.challenge=${challenge}`
-      );
+      const res = await fetch('/api/health');
       if (res.ok) {
-        const text = await res.text();
-        if (text === challenge) {
-          setTestResult('Webhook GET Handshake 200 OK: Correct challenge echoed successfully!');
-        } else {
-          setTestResult(`Received unexpected response: ${text}`);
-        }
+        const health = await res.json();
+        setTestResult(`Backend is reachable (${health.status || 'response received'}). Configure the Meta handshake in Meta for Developers.`);
       } else {
-        setTestResult(`Handshake response: ${res.status} (Note: On static GitHub Pages, no server route exists; use Cloud Run for Meta Webhooks)`);
+        setTestResult(`Backend health check returned ${res.status}. GitHub Pages is static; deploy the API server for live webhooks.`);
       }
     } catch (err: any) {
       setTestResult(`Test note: ${err.message}`);
@@ -112,7 +104,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: 'npm'
       - run: npm ci
       - run: npm run build
@@ -124,10 +116,10 @@ jobs:
         uses: actions/deploy-pages@v4`;
 
   const dockerfileSnippet = `# Production Container for Google Cloud Run
-FROM node:22-slim
+FROM node:24-slim
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
 RUN npm run build
 ENV NODE_ENV=production
@@ -144,7 +136,8 @@ gcloud run deploy whatsapp-drive-genie \\
   --platform managed \\
   --region asia-southeast1 \\
   --allow-unauthenticated \\
-  --set-env-vars GEMINI_API_KEY="\$GEMINI_API_KEY",WHATSAPP_VERIFY_TOKEN="whatsapp_drive_genie_verify_token_2026"`;
+  --set-secrets GEMINI_API_KEY=gemini-api-key:latest,WHATSAPP_ACCESS_TOKEN=whatsapp-access-token:latest,META_APP_SECRET=meta-app-secret:latest \\
+  --set-env-vars WHATSAPP_VERIFY_TOKEN="SET_A_PRIVATE_TOKEN",WHATSAPP_PHONE_NUMBER_ID="SET_PHONE_NUMBER_ID"`;
 
   return (
     <div className="flex flex-col h-full bg-zinc-950 text-zinc-100 overflow-y-auto p-4 sm:p-6 space-y-6">
@@ -325,7 +318,7 @@ gcloud run deploy whatsapp-drive-genie \\
               <h3 className="text-base font-semibold text-white">Optional: Client-Side Gemini API Key for GitHub Pages</h3>
             </div>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              On static GitHub Pages without an Express backend, our built-in assistant automatically uses the RAG retriever and Drive organizer. If you want full live Gemini AI text generation directly in the browser on GitHub Pages, enter an API key below (stored in your browser's <code className="text-zinc-300">localStorage</code>):
+              A static GitHub Pages site cannot keep an API key secret. This optional key is stored in this browser's <code className="text-zinc-300">localStorage</code> and can be extracted by anyone with access to the browser profile. Prefer the server-side Gemini secret on Cloud Run for production. If you still use a browser key, restrict it in Google Cloud and rotate it if exposed.
             </p>
 
             <form onSubmit={handleSaveApiKey} className="flex gap-2">
@@ -380,9 +373,9 @@ gcloud run deploy whatsapp-drive-genie \\
               <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1">
                 <span className="text-[11px] font-semibold text-zinc-400 uppercase">Verify Token</span>
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-mono text-zinc-200">whatsapp_drive_genie_verify_token_2026</span>
+                  <span className="text-xs font-mono text-zinc-200">Set WHATSAPP_VERIFY_TOKEN privately on backend</span>
                   <button
-                    onClick={() => copyToClipboard('whatsapp_drive_genie_verify_token_2026', 'verifyToken')}
+                    onClick={() => copyToClipboard('WHATSAPP_VERIFY_TOKEN', 'verifyToken')}
                     className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
                   >
                     {copiedKey === 'verifyToken' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -398,7 +391,7 @@ gcloud run deploy whatsapp-drive-genie \\
                 className="flex items-center gap-1.5 text-xs px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition-colors"
               >
                 <Zap className="w-3.5 h-3.5" />
-                {isTesting ? 'Verifying...' : 'Test Webhook Verification Handshake'}
+                {isTesting ? 'Checking...' : 'Check Backend Health'}
               </button>
               {testResult && (
                 <span className="text-xs font-mono text-emerald-400">{testResult}</span>

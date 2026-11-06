@@ -96,14 +96,14 @@ export async function processClientSideAssistant(
   // 5. Intelligent Client-Side Synthesis (100% static GitHub Pages compatible)
   if (media) {
     const classification = classifyDocumentForDrive(media.filename, media.content);
-    const text = `*Document Processed & Stored in Google Drive!* ✅
+    const text = `*Document ready in this browser session* 📄
 
 • *File:* \`${media.filename}\`
 • *Target Folder:* \`WhatsApp Assistant / ${classification.folderName}\`
 • *Category:* *${classification.folderCategory}*
 • *Tags:* ${classification.suggestedTags.map(t => `#${t}`).join(' ')}
 
-⚡ *Knowledge Base:* Chunks extracted and indexed into your RAG search engine. You can now ask questions about this document right here in WhatsApp or in the Drive tab!`;
+⚠️ This is a local suggestion only. Connect Google Drive and upload from the Drive tab to store the original file. Live WhatsApp requires a deployed backend and Meta credentials.`;
 
     return { text, toolCalls };
   }
@@ -131,20 +131,20 @@ export async function processClientSideAssistant(
     const folders = driveService.getAllSandboxFiles().filter(f => f.isFolder);
     const folderList = folders.map(f => `• 📁 *${f.name}*`).join('\n');
     return {
-      text: `*Your Google Drive Folder Structure:* 📁\n\n${folderList}\n\nAny user can upload documents via the paperclip icon or browse them in the *Google Drive* tab!`,
+      text: `*Available folders in this browser's local demo:* 📁\n\n${folderList}\n\nConnect Google Drive in the Drive tab to see or change files in your real account.`,
       toolCalls,
     };
   }
 
   if (queryLower.includes('who are you') || queryLower.includes('help') || queryLower.includes('hello') || queryLower.includes('hi')) {
     return {
-      text: `*Hello! I'm DriveGenie*, your intelligent personal assistant.\n\n• Anyone can click *Google Drive* to connect their personal account.\n• Upload invoices, agreements, or reports and I'll automatically organize them into Google Drive folders.\n• Ask me questions about any uploaded document using our RAG search.\n• Everything is 100% live on GitHub Pages!`,
+      text: `*Hello! I'm DriveGenie*, your personal assistant.\n\n• Connect Google Drive from the Drive tab to use your account.\n• Upload documents in the dashboard to organize them and add them to the local knowledge base.\n• Live AI answers require a Gemini API key or configured backend.\n• Live WhatsApp replies require a deployed webhook backend and Meta credentials.`,
       toolCalls,
     };
   }
 
   return {
-    text: `*DriveGenie WhatsApp Assistant* ⚡\n\nI received your query: "${message}".\n\n• *Google Drive:* Ready to store & organize your files.\n• *RAG Search:* Searched your document index.\n• *GitHub Pages Mode:* Active & ready for multi-user connections. Upload a document or connect your Google account to get started!`,
+    text: `*DriveGenie Assistant* ⚡\n\nI received your query: "${message}".\n\n• *Google Drive:* Connect your account in the Drive tab.\n• *Knowledge search:* No matching local document was found.\n• *Live AI:* Configure a Gemini key or backend to enable generated answers.`,
     toolCalls,
   };
 }

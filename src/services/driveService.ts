@@ -322,14 +322,26 @@ class DriveService {
           parents: folderId !== 'root' ? [folderId] : undefined,
         };
 
-        const multipartRequestBody =
+        const multipartHeader =
           delimiter +
           'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
           JSON.stringify(metadata) +
           delimiter +
-          `Content-Type: ${mimeType}\r\n\r\n` +
-          content +
-          closeDelimiter;
+          `Content-Type: ${mimeType || 'application/octet-stream'}\r\n\r\n`;
+        const dataUrl = content.match(/^data:[^;,]+;base64,([\s\S]*)$/);
+        let multipartRequestBody: BodyInit;
+        if (dataUrl) {
+          const binary = atob(dataUrl[1]);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+          multipartRequestBody = new Blob([
+            multipartHeader,
+            bytes.buffer as ArrayBuffer,
+            closeDelimiter,
+          ]);
+        } else {
+          multipartRequestBody = multipartHeader + content + closeDelimiter;
+        }
 
         const res = await fetch(
           'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart',
