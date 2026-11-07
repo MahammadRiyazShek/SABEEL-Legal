@@ -1,4 +1,4 @@
-import { vector } from "./db.ts";
+import { vector } from "./db.js";
 export const provider = () => process.env.AI_PROVIDER || "openai";
 export const configured = () =>
   !!(provider() === "gemini"

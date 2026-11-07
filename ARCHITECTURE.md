@@ -1,52 +1,31 @@
-# Architecture and data flow
+# Architecture and implemented scope
 
-```text
-WhatsApp Meta webhook ── signature + sender allowlist ──┐
-                                                     ├── PostgreSQL durable jobs
-React workspace ── signed-in same-origin Express API ─┘          │
-                                                                ├── extraction / OCR
-                                                                ├── metadata + exact quote checks
-                                                                ├── document chunks + embeddings
-                                                                ├── Google Drive mirror / recursive import
-                                                                └── optional Pinecone mirror
+## Persistent storage
 
-Research question ── FTS + vector RRF ── filtered graph-neighbor expansion
-                                      └── cited AI answer + coverage counts
-Full corpus study ── all selected extracted pages ── per-document notes
-                                                  └── hierarchical synthesis + durable report
+PostgreSQL with pgvector stores original bytes, extracted text, page chunks, 1536-dimensional vectors, metadata, exact-quote entity evidence, memories, conversations, monitors, reminders, job checkpoints and audit events. No browser-local document database or in-memory production store is used. Files are SHA-256 deduplicated. Google Drive is an integrated original-file mirror/import source, not the job database.
 
-Persistent local-time scheduler ── dated source fetch + identifier match
-                                  └── run record + WhatsApp delivery job
-Conversations + explicit vector memories + rolling summaries ── per-user context
-```
+## Two research paths
 
-## Persistence
+**Focused RAG:** embedding search + PostgreSQL full-text search + graph-neighbor passages, scoped by selected documents/village/survey metadata. The response includes retrieved source UUIDs and page labels. Optional Pinecone returns candidate IDs; authoritative passages still come from PostgreSQL. Retrieval is NOT an exhaustive review of the entire library.
 
-- `documents`: originals, MIME, SHA, extracted text, JSON metadata, Drive IDs and processing state.
-- `chunks`: page, ordinal, source text, full-text index, vector(1536), HNSW index.
-- `entities`: source document, type, normalized value, exact quote. Joins support evidence-backed connections.
-- `conversations`, `memories`: private owner-scoped history and vectors.
-- `jobs`: claimed with `FOR UPDATE SKIP LOCKED`, heartbeat, retries, progress and result.
-- `monitors`, `monitor_runs`, `reminders`: persistent schedules, observations and delivery status.
-- `sessions`: hashed opaque session tokens with expiry, HttpOnly/SameSite cookies.
-- `webhook_events`: Meta message deduplication.
-- `settings`: embedding model identity, daily markers and per-user rolling summaries.
-- `audit`: login, uploads, edits, deletion and full-study launch records.
+**Full-corpus study:** a durable `study` job snapshots all eligible selected document IDs. The worker reads every extracted page in each available selected document, processes bounded blocks, checkpoints per-document notes, reduces the notes and synthesizes a report. After a failure/retry, completed document notes are reused. The response reports selected and actually reviewed counts. Source originals remain the evidence authority. A single-document block in flight is reprocessed after a crash; checkpoints are per-document, not per-token.
 
-Original file bytes are private database records and are served only through authenticated download endpoints. No service keys are exposed by the frontend. Source fetches use HTTPS, an exact administrator-configured host allowlist, public-IP checks, redirect checks, size/time limits and no automatic cookie/login interaction. Registered tool endpoints and API tokens are environment-controlled.
+Thousand-document orchestration was checked with a local deterministic provider fixture, not a production workload benchmark. Real throughput and AI usage vary with document length, OCR quality, model limits and worker capacity. The database and worker can grow independently of the Vercel frontend. The graph screen shows up to 250 nodes / 1,500 edges for responsiveness; retrieval and full-corpus review are not restricted to those visible nodes. Fuzzy original-file retrieval considers up to the latest 10,000 documents. Document-list chat commands paginate 40 results.
 
-## What a document connection means
+## Entity connections
 
-An edge means two extracted entities share a normalized identifier, supported by a source quote on each side. A survey edge also needs a shared village. Case/party/reference edges support retrieval expansion. An edge alone does not assert a proven ownership chain, precedence, validity of an order or absence of conflicting evidence. The research prompt separates those claims.
+Case, party/person, reference and survey entities are stored only with supporting quotes verified against extracted text. Survey matches require a shared village. Shared entity connections are evidence of a common identifier, not a judicial finding or guaranteed equivalence of properties/people. The report prompt distinguishes explicit connections from hypotheses and identifies gaps/contradictions.
 
-## Research modes and coverage
+## Ingestion and execution
 
-Focused RAG retrieves a bounded set of passages from the full database and reports the number of eligible documents versus retrieved documents. Full-corpus jobs read all extracted pages of every selected available document; summaries are reduced in batches to fit model context. This avoids presenting the first handful of search results as if they were a review of thousands of complete records. Neither mode guarantees perfect OCR, perfect entity extraction or a particular model's reasoning quality; citations and original downloads are available for checking.
+Vercel handles short HTTP requests, writes files/jobs and returns queued status. It does not start workers or timer loops. A Docker worker claims jobs with PostgreSQL row locking / SKIP LOCKED, maintains job heartbeats, retries failed work up to five attempts and recovers stale running jobs. Ingestion uses Poppler/Tesseract/Antiword, Mammoth and ExcelJS. Scanned PDF pages retain their original page positions. Embeddings are indexed after extraction/classification. Full report polling omits large intermediate checkpoint notes from HTTP responses.
 
-PDF pages retain source page numbers. DOCX/DOC/plain-text inputs are treated as extracted text page 1 because their visual pagination is not reconstructed. TIFF/image OCR can return page separators. Mixed PDFs trigger OCR for pages with very little extractable text; choosing the correct OCR languages matters.
+The worker scheduler checks every 30 seconds. It creates at most one monitor job per local day using row locks, queues reminders and optional daily Drive imports. Vercel's authorized daily cron is a redundant queueing trigger. Monitors resolve configured dated source templates and verify both a publication-date marker and the target identifier before reporting a match/absence in that source.
 
-## Operational boundaries
+## Interfaces and identity
 
-The shipped application runs API and worker loops in the same Docker service. Multiple instances can share the queue, but changing deployment topology needs connection-pool sizing and load testing. A single HNSW/PostgreSQL service supports the architecture for larger corpora; the delivered tests validate behavior, not a 1,000-document performance benchmark. Provider accounts, exact portal adapters, template approval, DNS/domain and cloud provisioning must be configured by the deploying account.
+No login, signup, web password or session cookies remain. The web workspace identity is `web:workspace`: web conversations/memories are shared. WhatsApp identity is `wa:<digits>` with phone allowlisting and a persisted dialect preference. Meta HMAC validation and cron bearer authorization remain independent of the no-login web UI. The Vercel adapter removes the lazy request-body getter before Express parses the original bytes, preserving Meta signature validation.
 
-Internet research uses a search API. The source monitor is an identifier/date observer on a configured endpoint, not a universal browser or CAPTCHA solver. External task execution is explicit through registered HTTP tools, not arbitrary autonomous actions inferred from a document.
+## Deliberately explicit boundaries
+
+Provider accounts, new email/Google IDs, OAuth refresh tokens and deployment permissions are not created by the package. WhatsApp returns text/files, not generated speech. Legacy `.xls`, handwritten recognition guarantees and optional image-to-PDF conversion are not included. External actions use registered HTTP/n8n endpoints. Court monitoring is configured-source checking rather than unrestricted portal browsing. Automatic interpretation of every possible document into an arbitrary autonomous workflow is not implemented; supported extracted dates/identifiers, source mappings, reminder controls and registered tools define executable behavior.

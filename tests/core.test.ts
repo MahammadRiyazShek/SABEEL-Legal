@@ -163,3 +163,19 @@ test("plain text extraction preserves input", async () => {
   );
   assert.deepEqual(pages, ["A real plain text document."]);
 });
+
+test("XLSX extraction preserves worksheet names, rows and values", async () => {
+  const { default: ExcelJS } = await import("exceljs");
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet("Revenue History");
+  sheet.addRow(["Village", "Survey", "Owner"]);
+  sheet.addRow(["Shamshabad", 626, "Example owner"]);
+  const pages = await extract(
+    Buffer.from(await workbook.xlsx.writeBuffer()),
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "history.xlsx",
+  );
+  assert.equal(pages.length, 1);
+  assert.match(pages[0], /Revenue History/);
+  assert.match(pages[0], /Shamshabad.*626.*Example owner/);
+});

@@ -6,3 +6,8 @@ dist/
 *.log
 coverage/
 .DS_Store
+
+!.env.vercel.example
+!.env.worker.example
+.vercel/
+previews/

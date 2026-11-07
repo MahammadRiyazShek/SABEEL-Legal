@@ -1,191 +1,156 @@
-# Deployment and account connection
+# SABEEL — deploy on Vercel, with a persistent research worker
 
-## 1. Replace the prototype repository
+## 1. Replace the GitHub repository contents
 
-Unzip the package. Upload its **contents**, including dotfiles and `.github/`, into the root of `MahammadRiyazShek/SABEEL-Legal` (or a new repository). Replace the old `server.ts`, `src/`, `package.json`, old lockfiles and old deployment workflow. Do not nest the new files inside a second project folder.
+Repository: https://github.com/MahammadRiyazShek/SABEEL-Legal
 
-The new backend entrypoint is `backend/server.ts`. Do not retain old workflows that deploy `src/` or a React bundle as a functioning full-stack app. Commit `package-lock.json`; do not commit `.env`, service-account keys or access tokens.
+Unzip this package and place its CONTENTS at the repository root. Replace the old files rather than overlaying only `src/`. Remove obsolete root `server.ts`, old login-gated builds, old deployment configuration and obsolete workflows if they remain in the repository. Keep the new `api/`, `backend/`, `assets/`, `src/`, `vercel.json`, `package.json` and `package-lock.json` together. Do not upload `node_modules`.
 
-## 2. Recommended: Render Blueprint connected to GitHub
+No admin username/password is required. Opening the app goes directly to Document Vault. All web visitors use the same workspace and shared web history, as requested. WhatsApp remains restricted to configured phone numbers. There is no web staff-account separation in no-login mode.
 
-1. In Render, choose **New → Blueprint**, connect GitHub and choose this repository.
-2. Render reads `render.yaml` and creates `sabeel-legal` plus `sabeel-postgres` in Singapore.
-3. Set `ADMIN_PASSWORD` to a unique value of at least 16 characters. Set `APP_URL` to the exact app origin, for example `https://sabeel-legal-xxxx.onrender.com` (no trailing path). If not known yet, use the expected origin, deploy, then correct it and redeploy before sign-in.
-4. Set `OPENAI_API_KEY`. The default models are `gpt-4.1-mini` and `text-embedding-3-small` with 1536 dimensions. Alternatively set `AI_PROVIDER=gemini`, add `GEMINI_API_KEY`, and leave `CHAT_MODEL` / `EMBEDDING_MODEL` unset to use the Gemini defaults. Voice transcription separately needs `OPENAI_API_KEY`.
-5. Deploy. `/healthz` becomes healthy after schema creation and database connection succeed. `CREATE EXTENSION vector` runs automatically; Render supports pgvector. Use the internal database URL supplied by the Blueprint.
-6. Open the app; sign in as `admin` or `ADMIN_USERNAME`.
-7. Add Drive, WhatsApp, live search and source-monitor settings below to the service's environment and redeploy. Credentials are not entered into the browser.
-8. GitHub commits subsequently trigger redeployments. CI verifies the source independently.
+## 2. Create persistent PostgreSQL with pgvector
 
-Use an always-running web service for daily checks and reminders. A sleeping/static-only service cannot run a 19:00 scheduler while suspended. The queue and last-run markers survive application restarts in PostgreSQL. If restarted after the scheduled local time, a missed check is queued for that day; it does not replay every historical missed day.
+Use an externally reachable PostgreSQL database with pgvector (for example, a provider supporting the vector extension). The Vercel API and worker must use the SAME `DATABASE_URL`. Do not use a Render private/internal database address from Vercel; use an external connection URL.
 
-`APP_URL` must match the origin you use to sign in. If using a custom domain, update it. TLS is provided by the platform. Set `TRUST_PROXY_HOPS` to the known reverse-proxy hop count; default is 1.
+The database role must be able to create tables and indexes. Enable the extension in the provider's SQL editor if extension creation needs an administrator:
 
-## 3. Railway or another Docker host
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
 
-`railway.json` uses the provided Dockerfile and `/healthz`. Connect the GitHub repository to a new Railway service, add a PostgreSQL service **with pgvector installed**, and set `DATABASE_URL` to its private connection URL. Set the same environment variables from `.env.example`. The Railway JSON does not create your database or install pgvector into an ordinary stock database image. A `pgvector/pgvector:pg17` database service with a persistent volume is a compatible option.
+The application creates its schema automatically, with a database advisory lock so API cold starts and worker startup do not race. Optional manual initialization: `npm run db:migrate` with the environment loaded.
 
-For a VPS, run Docker Compose and place Caddy/Nginx with HTTPS in front of the localhost-bound port. Use a URL-safe `POSTGRES_PASSWORD` in Compose because it is interpolated into the connection URL. Do not remove the `sabeel_database` volume during upgrades. `docker compose down` preserves it; `down -v` removes it.
+If reusing the previous SABEEL database, take a backup first. Existing documents and vectors remain; existing `ADMIN_*` variables are ignored. Keep the same embedding provider/model used by that database. The no-login web owner is now `web:workspace`; earlier account-specific web conversations are not silently reassigned. Previously generated unique document tags continue to work. The new keyword uniqueness index requires pre-existing nonempty tags to be unique.
 
-Native Node development needs Node 22+, PostgreSQL with pgvector, `pdftotext` / `pdftoppm`, Tesseract, antiword and DejaVu fonts. Set `.env`, then run `npm ci && npm run dev`. The Docker image installs those system dependencies for you.
+## 3. Deploy the web workspace/API on Vercel
 
-## 4. Google Drive
+Import the GitHub repository into the existing Vercel project for https://sabeel-legal.vercel.app/.
 
-### Personal Google Drive: OAuth refresh token (recommended for Gmail accounts)
+| Setting | Value |
+|---|---|
+| Framework | Vite |
+| Root directory | Repository root |
+| Install command | `npm ci` |
+| Build command | `npm run build` |
+| Output directory | `dist` |
+| Node.js | 22.x |
 
-- Enable Google Drive API in a Google Cloud project.
-- Configure the OAuth consent screen and a Web OAuth client.
-- Authorize the Drive scope `https://www.googleapis.com/auth/drive` with offline access, and exchange the authorization code for a refresh token. Google OAuth Playground can do this using **your own OAuth credentials**, with its redirect URI added to that client.
-- Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` and `GOOGLE_DRIVE_FOLDER_ID`.
-- OAuth apps left in Google's external Testing mode can have short-lived refresh-token behavior. Configure the consent-screen publishing/user access appropriate for your account before relying on unattended operation.
+`vercel.json` routes `/api/*` to the single Node.js function and serves the React workspace. It also includes a daily scheduler at 13:30 UTC (19:00 Asia/Kolkata).
 
-### Workspace Shared Drive: service account
-
-Set `GOOGLE_SERVICE_ACCOUNT_JSON` to the complete JSON on one environment-variable line and give its client email appropriate access to the intended Shared Drive folder. Set `GOOGLE_DRIVE_FOLDER_ID` to that folder's ID. For personal My Drive storage, use the OAuth option rather than assuming a service account can own uploaded files or use your storage allocation.
-
-### Import and organization
-
-- The vault's **Import Drive folder** button queues recursive import of the configured folder and descendants. Google Docs/Sheets/Slides are imported as PDF exports where the Drive export API supports them. Folder shortcuts are not followed.
-- `DRIVE_AUTO_SYNC=true` queues one incremental scan per local day. Existing imported files with changed `modifiedTime` are reindexed; unchanged files are skipped.
-- New uploads are mirrored to `root/category/village/filename` after successful indexing. Unknown categories/villages use General.
-- The original file also remains in PostgreSQL, so downloads do not depend on a public Drive sharing link.
-- Import errors are collected in the Drive sync job result. Database deletion does not delete the Drive source. Deleting a Drive source does not automatically delete its local archived copy.
-
-## 5. WhatsApp Cloud API
-
-Set these variables:
-
-| Variable | Value |
-| --- | --- |
-| `WHATSAPP_PHONE_NUMBER_ID` | Meta Cloud API business phone number ID |
-| `WHATSAPP_ACCESS_TOKEN` | Suitable production System User access token |
-| `META_APP_SECRET` | Meta app secret for webhook HMAC validation |
-| `WHATSAPP_VERIFY_TOKEN` | Your own long random verification string |
-| `WHATSAPP_ALLOWED_NUMBERS` | Authorized client/staff numbers, comma-separated digits including country code |
-| `WHATSAPP_DEFAULT_RECIPIENT` | Optional authorized number for auto hearing reminders/source mappings |
-| `META_GRAPH_VERSION` | Default v23.0; update when your account requires another supported version |
-
-In Meta's webhook setup, use:
+Set environment variables from `.env.vercel.example` in Project Settings > Environment Variables. Minimum configuration:
 
 ```text
-https://YOUR-APP-HOST/api/whatsapp/webhook
+DATABASE_URL=<external PostgreSQL connection URL>
+DATABASE_SSL=true
+APP_URL=https://sabeel-legal.vercel.app
+NODE_ENV=production
+AI_PROVIDER=openai
+OPENAI_API_KEY=<your key>
+CRON_SECRET=<random alphanumeric value, at least 16 characters>
+DEFAULT_TIMEZONE=Asia/Kolkata
 ```
 
-Use the same verification token and subscribe to **messages**. Signed inbound messages are acknowledged after atomic persistence and processed by background workers. Unauthorized senders are ignored. Original PDFs/DOCX/images are downloaded from Meta and indexed. Voice notes require an OpenAI transcription key, independently of the selected chat provider.
+For Gemini instead, set `AI_PROVIDER=gemini` and `GEMINI_API_KEY`. Voice transcription still needs an OpenAI key. Database SSL settings must follow your provider's connection instructions; a URL with `sslmode=require` can configure SSL itself.
 
-Scheduled notifications may occur outside the customer-service window. Create an approved template with a body such as:
+Redeploy after changing environment variables. The frontend build does not require a database or provider credentials; API operations do. Check `/api/healthz` for database connectivity and `/api/status` for configuration/worker heartbeat.
+
+Vercel invocation durations and scheduler timing depend on the project's plan. The included `maxDuration` is 300 seconds; reduce it if your plan rejects it. The persistent worker performs the actual long-running jobs and schedules checks every 30 seconds, so precise 19:00 checks do not depend on daily Vercel scheduler precision. Cron configuration here is code only; no deployment or live schedule was activated by preparing these files.
+
+## 4. Deploy the worker — required for full functionality
+
+In Render, create a Blueprint from the SAME repository. The root `render.yaml` provisions a Docker background worker, NOT a second website. Or create a Background Worker manually with Docker and command `npm run worker`. Railway/Fly/a Docker VPS can run the same image/command.
+
+The Dockerfile installs Poppler, Tesseract, Antiword and OCR language packs. The worker has no public port. Copy values from `.env.worker.example` into its environment. Set the SAME database, AI provider/model, Drive settings, Meta credentials, Tavily key, court source mappings and connected-tool secrets used by Vercel. These values are not synchronized automatically between hosts. Use `DB_POOL_SIZE=8` on the worker and `3` on Vercel initially.
+
+Set `APP_URL` to the Vercel domain, not the worker host. Add optional credentials described below before testing those features. Deploy the worker and confirm its logs show `SABEEL persistent worker running`.
+
+Open Integrations & Jobs in the Vercel app. The worker heartbeat should be recent. Without a worker, uploads remain queued and WhatsApp webhooks queue messages without replies.
+
+## 5. Connect Google Drive
+
+Enable the Google Drive API in a dedicated Google Cloud project. Use either:
+
+**Personal Drive OAuth:** set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `GOOGLE_DRIVE_FOLDER_ID`. The refresh token must have access to the target folder and relevant Drive read/write scopes. The application does not provide a browser Google-account connection flow; supply the refresh token through the environment.
+
+**Service account:** set one-line `GOOGLE_SERVICE_ACCOUNT_JSON` and `GOOGLE_DRIVE_FOLDER_ID`, with appropriate access to a Workspace Shared Drive/folder. Use OAuth for a personal Drive when service-account storage/ownership prevents uploads.
+
+Set these on BOTH hosts. In the app click **Import Drive folder** to queue recursive import, or set `DRIVE_AUTO_SYNC=true` for daily incremental import. Original files are retained in PostgreSQL; newly uploaded files are mirrored under category/village folders when Drive is configured. Each file is limited to 25 MB. Drive-imported files receive system tags; edit their keywords in Document Vault if desired. Browser uploads always ask for keywords.
+
+## 6. Connect WhatsApp Cloud API
+
+Set on BOTH hosts:
 
 ```text
-SABEEL update: {{1}}
+WHATSAPP_PHONE_NUMBER_ID
+WHATSAPP_ACCESS_TOKEN
+META_APP_SECRET
+WHATSAPP_VERIFY_TOKEN
+WHATSAPP_ALLOWED_NUMBERS
+WHATSAPP_DEFAULT_RECIPIENT
+WHATSAPP_ALERT_TEMPLATE
+WHATSAPP_TEMPLATE_LANGUAGE
+META_GRAPH_VERSION
 ```
 
-Use a **single positional text body parameter** and no required header/button parameters. Set `WHATSAPP_ALERT_TEMPLATE` to the approved name and `WHATSAPP_TEMPLATE_LANGUAGE` to its exact language code, for example `en` or `en_US`. Approval is managed by Meta; the application does not create or approve the template. When a reply window is open it sends ordinary text; otherwise it uses this template. Delivery failures appear as retryable/failed `notify` jobs instead of fake success messages.
+Use digits-only recipient numbers with country codes, comma-separated. In Meta configure:
 
-The server sends one WhatsApp text response up to 4,000 characters; use the web workspace for long reports and PDF export. Delivery jobs are at-least-once: a provider timeout after acceptance can cause a duplicate on retry.
+```text
+Callback: https://sabeel-legal.vercel.app/api/whatsapp/webhook
+Verify token: exactly WHATSAPP_VERIFY_TOKEN
+Subscription: messages
+```
 
-## 6. Court and general-document monitoring
+Inbound webhook signatures are verified against the original request bytes. Event IDs are persisted for deduplication. The API acknowledges queued messages; the worker processes them. A new document prompts for a unique keyword. Reply with the keyword before the next file. Choose English/Urdu when prompted or use `/language urdu`.
 
-The app does not pretend that every court has a uniform public API. Configure the actual accessible official HTML/PDF/JSON source for your court or use your own connector exposing a dated source feed. Interactive CAPTCHA/login portals require a portal-specific connector; the generic fetcher reports them as unverified.
+For scheduled alerts outside the messaging reply window, configure an approved WhatsApp template with one body text parameter. A full research report is saved in the workspace even if an out-of-window template carries only a brief preview/link.
 
-### Manual setup
+## 7. Optional Pinecone
 
-- Add the exact HTTPS hostname to `ALLOWED_FETCH_HOSTS` (for example the hostname of the real official source you selected). Redirect destinations must also be allowlisted.
-- In **Monitoring & Reminders → Add source monitor**, enter the source URL, a case/reference identifier, a publication/date marker, local time and timezone.
-- URLs can use `{date}` as `YYYY-MM-DD` or `{YYYY}`, `{MM}`, `{DD}` placeholders for **tomorrow in the monitor timezone**.
-- The date marker can contain `YYYY`, `MM`, `DD`, e.g. `CAUSELIST FOR DD.MM.YYYY`. Match the actual source's formatting. A narrow publication label is better than a bare date appearing elsewhere on a large page.
-- Checks search the configured source; they do not search every official list or prove legal case status. Use a date-specific list URL/feed and verify the connector for that court. A bare case number found on a multi-date page is not definitive listing verification.
-- The outcome is `found_in_source`, `not_found_in_source`, or `unverified`. Only a source with the configured date marker can produce a found/not-found result. Missing date, HTTP failure, challenge page or parsing failure produces unverified.
-- The default is 19:00 Asia/Kolkata. The monitor repeats every day until paused/deleted, including after it finds a match. It does not silently stop or create procedural filings.
-- The same engine can monitor a revenue-file reference, application number, licence condition or other document identifier in an accessible source. A literal stable marker can be used for a non-dated general status source; in that configuration the output is only an identifier observation, not a date-verified court-listing claim.
+PostgreSQL pgvector works without Pinecone. For a Pinecone mirror/search backend, create an index compatible with 1536-dimensional embeddings and set:
 
-### Automatic monitoring after upload
+```text
+VECTOR_BACKEND=pinecone
+PINECONE_API_KEY=<key>
+PINECONE_HOST=https://<your-index-host>.pinecone.io
+PINECONE_NAMESPACE=sabeel
+```
 
-Set `MONITOR_SOURCES_JSON` once for each document category you want to auto-track. Example structure (replace the example URL with your real source; `.invalid` is intentionally not a working court):
+Use the same embedding model on both hosts and never mix embedding models in an existing index. Canonical document text, pages, metadata and jobs remain in PostgreSQL. Retry indexing/mirroring for existing records after enabling Pinecone.
+
+## 8. Document-triggered 7 PM checks
+
+The worker extracts explicit case identifiers and hearing dates during ingestion. A supported hearing date creates a reminder. Daily source checks require a known source; the app does not invent an official court endpoint from an uploaded order.
+
+Add exact source hostnames in `ALLOWED_FETCH_HOSTS` and mappings in `MONITOR_SOURCES_JSON`. Example CONFIGURATION ONLY; replace the example host/URL with your actual official accessible source:
 
 ```json
-[
-  {
-    "category": "Court H.C.",
-    "matchField": "caseNumber",
-    "url": "https://your-official-feed.invalid/list/{date}.pdf",
-    "datePattern": "CAUSELIST FOR DD.MM.YYYY",
-    "localTime": "19:00",
-    "timezone": "Asia/Kolkata",
-    "phone": "YOUR_AUTHORIZED_NUMBER"
-  }
-]
+[{"category":"Court H.C.","url":"https://official-court.example/cause-list/{YYYY}/{MM}/{DD}.pdf","datePattern":"DD.MM.YYYY","localTime":"19:00","timezone":"Asia/Kolkata"}]
 ```
 
-When an indexed upload has a matching category and an extracted case entity with quote evidence, the app creates its monitor automatically. Reindexing does not create another monitor for the same document/source URL. For other document types use `matchField` corresponding to a metadata field such as `surveyNumber`; qualify the source carefully. Source mapping failures are recorded in the audit log.
+The hostname must also be included in `ALLOWED_FETCH_HOSTS`. Source mappings are matched to extracted document metadata; examine `backend/documents.ts` for supported fields. You can also create a monitor directly in Monitoring & Reminders: title, source URL, exact case/reference match, publication date pattern, timezone, time and recipient.
 
-A stated hearing date with a matching source quote also creates a practice reminder at **09:00 India time on that date**. This is a reminder convention, not an extracted hearing time. It does not infer a court's cause-list URL. Review OCR-derived dates and source configuration in the vault.
+At 19:00 Asia/Kolkata the scheduler queues the check for the NEXT day's dated source. It repeats daily until paused/deleted, including after a match. Results distinguish `found_in_source`, `not_found_in_source` and `unverified`. A source with no target-date marker is unverified, not an assertion that a case is absent. Accessible HTML, text and PDF sources work; interactive/CAPTCHA portals need an official feed/API or a separately configured integration. This is a source-template monitor, not a browser automation adapter for every court portal.
 
-## 7. AI, Pinecone and scaling
+The same monitor mechanism can track identifiers in dated government notices/other sources. For broader periodic web research, register an external scheduler/n8n tool rather than treating a source monitor as a general autonomous web agent.
 
-Default mode requires one AI provider and PostgreSQL; Pinecone is optional. The standard pipeline is real hybrid RAG, not keyword search labelled as a vector database. Embeddings have **1536 dimensions** and are checked before insertion.
+## 9. Internet research and connected tools
 
-For Pinecone, create a dense cosine index with 1536 dimensions. Set `VECTOR_BACKEND=pinecone`, `PINECONE_API_KEY`, `PINECONE_HOST=https://YOUR-INDEX-HOST.pinecone.io`, and `PINECONE_NAMESPACE`. This code targets the standard vector `/vectors/upsert` and `/query` API, not an integrated-embedding index. Document uploads queue a Pinecone mirror job. Reindex any pre-existing documents after changing the vector backend so they are mirrored. Scoped queries use PostgreSQL fallback when Pinecone's global top-k is insufficient.
+Set `TAVILY_API_KEY` for live internet search. Use `/web your question` or the Internet research mode. Define explicit tools in `CONNECTED_TOOLS_JSON`, allow their hostnames, and place their tokens in named environment variables. See `backend/integrations.ts` for the exact schema (`name`, `url`, `tokenEnv`, etc.). `/tool tool_name {JSON}` runs a registered action; the assistant does not execute arbitrary APIs without registration.
 
-PostgreSQL remains authoritative for access and citations. Stale Pinecone IDs are discarded when their canonical chunks/documents no longer exist. The package does not delete old mirrored vectors automatically; use a dedicated namespace and clean/reset it during a controlled rebuild.
+## 10. First real-use check
 
-Do not change embedding model/provider on an existing index: the startup guard detects changes. For a deliberate change, back up the database, clear the old chunks and memories, remove the `embedding_model` settings row, select the new provider/model, restart and reindex every document. Reset/rebuild your dedicated Pinecone namespace if enabled. Ordinary chat-model changes do not require reindexing.
+Open the Vercel domain: Document Vault should open directly. Save a language choice. Confirm the worker heartbeat is recent. Upload one small PDF and enter a keyword. Wait for status `ready`, ask a question and open its cited page. Import a real Drive folder, test WhatsApp retrieval, then run a selected full-corpus review. Add one real source monitor and use Run now before relying on daily alerts.
 
-The library API paginates 100 records; RAG searches the database, not just the loaded UI page. Graph visualization shows at most 250 nodes/1,500 links and is explicitly labelled as bounded. Full-corpus research snapshots the selected document IDs and processes each available document's full extracted text in batches. Removed/unavailable documents are reported, not counted as reviewed. Metadata extraction/graph construction relies on model-extracted entities with quote checks and is not a mathematically exhaustive enumeration of every possible relationship.
+Browser uploads are sent one file per request and limited to 4 MB to stay below Vercel's 4.5 MB request ceiling. Original downloads over 4 MB open the stored Google Drive link when available; otherwise retrieve through WhatsApp. PDF merge/report downloads must also fit the Vercel response ceiling. Larger originals can enter through Drive or WhatsApp up to 25 MB/file.
 
-For thousands of documents, use adequate database storage, RAM and backups. Original file bytes are stored in PostgreSQL as well as Drive, so database sizing must include them. Increase worker concurrency and AI rate limits gradually; CPU-heavy OCR, database I/O and upstream quota can be bottlenecks. Each upload is limited to 25 MB, up to 20 files per multipart request. These are implemented limits, not a throughput/SLA guarantee; the package was not load-tested with a live 1,000-document customer corpus.
+## Local Docker alternative
 
-## 8. Staff, memories and connected APIs
+Copy `.env.example` to `.env`, set a URL-safe `POSTGRES_PASSWORD` and AI key, set `APP_URL=http://localhost:3000`, and run `docker compose up --build -d`. Compose supplies its internal PostgreSQL URL and disables database SSL. This path runs web/API/workers together and does not have Vercel's transfer ceiling.
 
-Set `STAFF_USERS_JSON` to an array of accounts with bcrypt hashes:
+## References
 
-```json
-[{"username":"assistant1","passwordHash":"PASTE_BCRYPT_HASH","role":"staff"}]
-```
-
-Run `npm run hash-password` locally to generate a hash, or provide `PASSWORD_TO_HASH` through your local process environment. Staff share the practice document vault and reminders labelled practice; their web chat history, explicit memories and conversation summaries are private to their username. WhatsApp identities are separated by phone number. Admin-only routes manage monitors, Drive imports, document deletion and audit viewing. This is a **single-practice shared workspace**, not a multi-tenant client-portal product; do not use one instance for mutually isolated firms.
-
-The first chat message per user per local day includes upcoming reminders and asks about new reminders/documents. There is no unsolicited daily conversation message without a configured reminder/monitor. `/remember` saves an explicit semantic memory; all conversations persist and summaries refresh periodically.
-
-Set `TAVILY_API_KEY` for live internet research. Use `/web ...` or the live research mode. URLs and search snippets are included in the result. There is no fake news cache.
-
-For registered tools:
-
-```json
-[
-  {
-    "name":"create_task",
-    "description":"Create a task using my n8n workflow",
-    "url":"https://YOUR-N8N-HOST/webhook/YOUR-WEBHOOK",
-    "method":"POST",
-    "tokenEnv":"N8N_TOOL_TOKEN"
-  }
-]
-```
-
-Set this JSON as `CONNECTED_TOOLS_JSON`, set the secret token separately, and allowlist the exact hostname. Invoke `/tool create_task {"title":"Prepare brief"}` explicitly. Tool names/endpoints are controlled by environment configuration; document text cannot register its own API. Authorized chat users can invoke the explicitly configured tools, so scope each connector's credentials appropriately. Arbitrary AI-generated code and arbitrary URLs are not executed.
-
-## 9. Keep the old GitHub Pages URL
-
-After the full app is live:
-
-1. In GitHub repository **Settings → Secrets and variables → Actions → Variables**, create `PUBLIC_APP_URL` with your actual HTTPS backend origin.
-2. In **Settings → Pages**, choose **GitHub Actions** as the source.
-3. In **Actions**, run **Publish GitHub Pages redirect** manually.
-
-The original `https://mahammadriyazshek.github.io/SABEEL-Legal/` address then redirects to the hosted full app. It is intentionally not another disconnected UI making relative `/api` calls against `github.io`.
-
-## 10. Operations, backups and troubleshooting
-
-- **Health:** `/healthz` checks database reachability. An integration marked configured can still have an expired/wrong token; check actual jobs.
-- **Queued/failed ingestion:** fix provider credentials or OCR dependency, then Retry in the vault. The job screen includes upstream errors and attempts.
-- **Failed Drive job:** verify folder access, OAuth refresh token, enabled API and Shared Drive setup.
-- **WhatsApp verification:** correct webhook URL, matching verify token, message subscription and app secret. Only allowlisted numbers are processed.
-- **Scheduled delivery failure:** verify approved template name/language/one-parameter shape and allowed recipient.
-- **Court check unverified:** open the exact source URL, verify publication marker/date, redirects and host allowlist. Do not interpret an inaccessible list as absence.
-- **Login CSRF/origin error:** correct `APP_URL` to your browser's exact origin and redeploy.
-- **Vector extension failure:** use a supported pgvector image/provider and a database owner allowed to create the extension.
-- **Backup:** enable provider snapshots/PITR as available and export periodic `pg_dump` backups. The app creates tables, not a managed backup service. Restore into a pgvector-enabled database.
-- **Jobs:** five exponential-backoff attempts, heartbeat/lease recovery, persistent progress between documents for full-corpus studies. Retry failed jobs after fixing configuration. A long document can repeat its in-progress page batches after a crash; completed per-document study notes are preserved.
-- **Cleanup:** expired sessions, logs, old completed jobs and source-monitor run history are retained until you add a retention policy. No automatic legal-record deletion is imposed.
-
-Official setup references: [Render](https://render.com/docs/blueprint-spec), [Render extensions](https://render.com/docs/postgresql-extensions), [Google Drive uploads](https://developers.google.com/workspace/drive/api/guides/manage-uploads), [WhatsApp templates](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/overview), [GitHub Pages](https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages).
+- Vercel functions: https://vercel.com/docs/functions/runtimes/node-js
+- Vercel payload limits: https://vercel.com/docs/functions/limitations
+- Vercel cron configuration/timezone: https://vercel.com/docs/cron-jobs
+- Cron secret: https://vercel.com/docs/cron-jobs/manage-cron-jobs
+- Render workers: https://render.com/docs/background-workers

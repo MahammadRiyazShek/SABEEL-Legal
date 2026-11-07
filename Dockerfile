@@ -16,6 +16,7 @@ COPY --from=build --chown=node:node /app/package*.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 COPY --from=build --chown=node:node /app/backend ./backend
 COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/assets ./assets
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=8s --start-period=45s --retries=3 \

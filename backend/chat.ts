@@ -1,4 +1,4 @@
-import { q, id, vector, enqueue } from "./db.ts";
+import { q, id, vector, enqueue } from "./db.js";
 import {
   generate,
   embed,
@@ -6,17 +6,17 @@ import {
   DATA_RULES,
   jsonFetch,
   transcribe,
-} from "./ai.ts";
-import { answer, internetAnswer } from "./research.ts";
-import { addDocument } from "./documents.ts";
+} from "./ai.js";
+import { answer, internetAnswer } from "./research.js";
+import { addDocument } from "./documents.js";
 import {
   allowedPhone,
   waSend,
   waDocument,
   connectedTool,
-} from "./integrations.ts";
-import { localSlot } from "./monitor.ts";
-import { fuzzyMatchDocument } from "./matcher.ts";
+} from "./integrations.js";
+import { localSlot } from "./monitor.js";
+import { fuzzyMatchDocument } from "./matcher.js";
 export async function remember(owner: string, text: string) {
   const [embedding] = await embed([text]);
   await q("INSERT INTO memories(id,owner,text,embedding) VALUES($1,$2,$3,$4)", [
@@ -38,6 +38,13 @@ export async function chat(
     "INSERT INTO conversations(id,channel,owner,role,content) VALUES($1,$2,$3,$4,$5)",
     [id(), channel, owner, "user", message],
   );
+  if (channel === "whatsapp")
+    dialect =
+      (
+        await q("SELECT value FROM settings WHERE key=$1", [
+          "language:" + owner,
+        ])
+      )[0]?.value || dialect;
   let reply = "";
   let citations: any[] = [];
   let attachment: any;
@@ -48,15 +55,62 @@ export async function chat(
     ["greet:" + owner + ":" + day],
   );
   const cmd = message.trim();
-  if (/^\/?(list documents|show documents)$/i.test(cmd)) {
+  if (
+    /^\/(?:language|lang)\s+/i.test(cmd) ||
+    /^(english|urdu|roman urdu)$/i.test(cmd)
+  ) {
+    const choice = cmd.replace(/^\/(?:language|lang)\s+/i, "");
+    const preference = /urdu|hyderabadi/i.test(choice)
+      ? "Professional Hyderabadi Roman Urdu"
+      : "English";
+    await q(
+      "INSERT INTO settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+      ["language:" + owner, JSON.stringify(preference)],
+    );
+    reply =
+      preference === "English"
+        ? "Language saved: English. You can change it with /language urdu."
+        : "Zubaan save ho gayi: Hyderabadi Roman Urdu. Badalne ke liye /language english bhejiye.";
+  } else if (/^\/research\s+/i.test(cmd)) {
+    const documents = await q(
+      "SELECT id FROM documents WHERE status='ready' ORDER BY created_at",
+    );
+    if (!documents.length)
+      reply =
+        "No indexed documents yet. Upload documents and wait for indexing before starting full-corpus research.";
+    else {
+      const jobId = await enqueue("study", {
+        documentIds: documents.map((d) => d.id),
+        query: cmd.replace(/^\/research\s+/i, ""),
+        owner,
+        notifyPhone: channel === "whatsapp" ? owner.slice(3) : null,
+      });
+      reply = `Full-corpus research queued across ${documents.length} indexed documents. Job: ${jobId}. ${channel === "whatsapp" ? "I will send the result here when ready." : "Track progress in Integrations & Jobs."}`;
+    }
+  } else if (/^\/?(list documents|show documents)(?:\s|$)/i.test(cmd)) {
+    const listQuery = cmd
+      .replace(/^\/?(?:list documents|show documents)\s*/i, "")
+      .trim();
+    const pageMatch = listQuery.match(/(?:^|\s)page\s+(\d+)$/i);
+    const page = Math.max(1, Number(pageMatch?.[1] || 1));
+    const filter = listQuery.replace(/(?:^|\s)page\s+\d+$/i, "").trim();
+    const pattern = "%" + filter + "%";
+    const total = (
+      await q(
+        "SELECT count(*)::int n FROM documents WHERE title ILIKE $1 OR metadata::text ILIKE $1",
+        [pattern],
+      )
+    )[0].n;
     const docs = await q(
-      `SELECT title,metadata->>'uniqueTag' tag,status FROM documents ORDER BY created_at DESC LIMIT 80`,
+      `SELECT title,metadata->>'uniqueTag' tag,status FROM documents WHERE title ILIKE $1 OR metadata::text ILIKE $1 ORDER BY created_at DESC LIMIT 40 OFFSET $2`,
+      [pattern, (page - 1) * 40],
     );
     reply = docs.length
       ? docs
           .map((d) => `${d.tag || "Indexing"} • ${d.title} (${d.status})`)
-          .join("\n")
-      : "No documents stored yet. Send a document here or upload it in Document Vault.";
+          .join("\n") +
+        `\nShowing page ${page}, ${total} matching documents. Next: list documents ${filter} page ${page + 1}`
+      : "No matching documents on this page. Use list documents or a village, survey number or category.";
   } else if (/^\/remember\s+/i.test(cmd)) {
     await remember(owner, cmd.replace(/^\/remember\s+/i, ""));
     reply = "Saved to your long-term memory.";
@@ -171,6 +225,13 @@ export async function chat(
         : "No pending reminders.") +
       "\nAny new reminders or documents to add today?";
   }
+  if (
+    channel === "whatsapp" &&
+    !(await q("SELECT 1 FROM settings WHERE key=$1", ["language:" + owner]))
+      .length
+  )
+    reply +=
+      "\n\nChoose your language: English or Hyderabadi Roman Urdu. Reply English or Urdu. Change later with /language english or /language urdu.";
   await q(
     "INSERT INTO conversations(id,channel,owner,role,content) VALUES($1,$2,$3,$4,$5)",
     [id(), channel, owner, "assistant", reply],
@@ -205,6 +266,42 @@ export async function processWhatsApp(message: any) {
   if (!allowedPhone(phone)) return { ignored: true };
   try {
     let text = message.text?.body || "";
+    const pendingKey = "pending_keyword:wa:" + phone;
+    const pending = (
+      await q("SELECT value FROM settings WHERE key=$1", [pendingKey])
+    )[0]?.value;
+    if (
+      pending &&
+      text &&
+      !/^\/(language|lang)\b/i.test(text) &&
+      !/^(english|urdu|roman urdu)$/i.test(text.trim())
+    ) {
+      const keyword = text.trim();
+      if (keyword.length < 2 || keyword.length > 100) {
+        await waSend(
+          phone,
+          "Use a search keyword between 2 and 100 characters.",
+        );
+        return;
+      }
+      await q("UPDATE documents SET metadata=metadata||$2::jsonb WHERE id=$1", [
+        pending.documentId,
+        JSON.stringify({ uniqueTag: keyword }),
+      ]);
+      await q("DELETE FROM settings WHERE key=$1", [pendingKey]);
+      await waSend(
+        phone,
+        `Search keyword saved: ${keyword}. Retrieve it with: send ${keyword}`,
+      );
+      return { tagged: true };
+    }
+    if (pending && (message.document || message.image)) {
+      await waSend(
+        phone,
+        "First reply with a unique search keyword for the previous document, then send the next file.",
+      );
+      return;
+    }
     const media = message.document || message.image || message.audio;
     if (media || !text)
       await q(
@@ -260,12 +357,21 @@ export async function processWhatsApp(message: any) {
           media.filename ||
             `WhatsApp-${message.id}.${mime.includes("pdf") ? "pdf" : mime.split("/")[1] || "bin"}`,
         );
-        await waSend(
-          phone,
-          `Stored ${result.document.title}. ${result.duplicate ? "Already in vault." : "Indexing is queued; use Document Vault to check progress."}`,
-        );
-        if (!media.caption) return result;
-        text = media.caption;
+        if (!result.duplicate) {
+          await q(
+            "INSERT INTO settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+            [pendingKey, JSON.stringify({ documentId: result.document.id })],
+          );
+          await waSend(
+            phone,
+            `Stored ${result.document.title}. Indexing queued. Reply with a unique search keyword, for example: Shamshabad 626 court order.`,
+          );
+        } else
+          await waSend(
+            phone,
+            `Already stored: ${result.document.title}. Search keyword: ${result.document.uniqueTag || "indexing"}.`,
+          );
+        return result;
       }
     }
     if (!text) {

@@ -11,7 +11,6 @@ import {
   RefreshCw,
   Download,
   ChevronRight,
-  LogOut,
   CheckCircle2,
   AlertCircle,
   Globe,
@@ -101,8 +100,8 @@ function Field({
   );
 }
 export default function App() {
-  const [user, setUser] = useState<any>(undefined),
-    [error, setError] = useState(""),
+  const [user] = useState({ username: "workspace", role: "admin" });
+  const [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [tab, setTab] = useState("vault"),
     [status, setStatus] = useState<Any>({}),
@@ -116,7 +115,9 @@ export default function App() {
     [scope, setScope] = useState("all"),
     [village, setVillage] = useState(""),
     [survey, setSurvey] = useState(""),
-    [dialect, setDialect] = useState("English"),
+    [dialect, setDialect] = useState(
+      () => localStorage.getItem("sabeel-dialect") || "English",
+    ),
     [output, setOutput] = useState<Any | null>(null),
     [studyJob, setStudyJob] = useState(""),
     [studyStatus, setStudyStatus] = useState<Any | null>(null);
@@ -142,9 +143,13 @@ export default function App() {
     }),
     [reminder, setReminder] = useState({ title: "", dueAt: "", phone: "" }),
     [showMonitor, setShowMonitor] = useState(false),
-    [plain, setPlain] = useState({ title: "", text: "" }),
-    [showPaste, setShowPaste] = useState(false),
-    [login, setLogin] = useState({ username: "admin", password: "" });
+    [plain, setPlain] = useState({ title: "", text: "", uniqueTag: "" }),
+    [showPaste, setShowPaste] = useState(false);
+  const [languageChosen, setLanguageChosen] = useState(
+    () => !!localStorage.getItem("sabeel-dialect"),
+  );
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadTags, setUploadTags] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
   async function run(fn: () => Promise<any>) {
@@ -172,11 +177,6 @@ export default function App() {
     setStatus(s);
     await loadDocs();
   }
-  useEffect(() => {
-    api("/api/auth/me")
-      .then(setUser)
-      .catch(() => setUser(null));
-  }, []);
   useEffect(() => {
     if (!user) return;
     void run(refresh);
@@ -230,69 +230,11 @@ export default function App() {
     return () => clearInterval(t);
   }, [studyJob]);
   useEffect(() => {
+    if (languageChosen) localStorage.setItem("sabeel-dialect", dialect);
+  }, [dialect, languageChosen]);
+  useEffect(() => {
     chatEnd.current?.scrollIntoView({ behavior: "smooth" });
   }, [history]);
-  if (user === undefined)
-    return (
-      <div className="loading">
-        <Loader2 className="spin" /> Loading SABEEL…
-      </div>
-    );
-  if (!user)
-    return (
-      <div className="login-shell">
-        <div className="login-card">
-          <div className="brandmark">
-            <Scale size={36} />
-          </div>
-          <p className="eyebrow">YOUR PRACTICE. CONNECTED.</p>
-          <h1>
-            SABEEL<span> Legal Intelligence</span>
-          </h1>
-          <p className="muted">
-            Document vault · Research · WhatsApp assistant
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void run(async () => {
-                setUser(await api("/api/auth/login", login));
-              });
-            }}
-          >
-            <Field label="Username">
-              <input
-                autoComplete="username"
-                value={login.username}
-                onChange={(e) =>
-                  setLogin({ ...login, username: e.target.value })
-                }
-              />
-            </Field>
-            <Field label="Password">
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={login.password}
-                onChange={(e) =>
-                  setLogin({ ...login, password: e.target.value })
-                }
-              />
-            </Field>
-            {error && <div className="error">{error}</div>}
-            <button className="primary wide" disabled={busy}>
-              {busy ? (
-                <Loader2 className="spin" size={18} />
-              ) : (
-                <ChevronRight size={18} />
-              )}{" "}
-              Sign in to workspace
-            </button>
-          </form>
-          <small>Use the credentials configured on your deployment.</small>
-        </div>
-      </div>
-    );
   const nav = [
     ["vault", "Document Vault", Files],
     ["research", "Research Studio", Search],
@@ -301,18 +243,36 @@ export default function App() {
     ["chat", "Assistant & Memory", MessageCircle],
     ["settings", "Integrations & Jobs", Settings],
   ] as const;
-  async function upload(files: FileList | null) {
+  function chooseFiles(files: FileList | null) {
     if (!files?.length) return;
-    await run(async () => {
-      const body = new FormData();
-      Array.from(files).forEach((f) => body.append("files", f));
-      const d = await api("/api/documents/upload", body);
-      setNote(
-        `${d.results.length} file(s) received. Indexing runs in the background; refresh to check progress.`,
+    const selected = Array.from(files);
+    const limit = (status.browserUploadLimitMB || 4) * 1000000;
+    if (selected.some((file) => file.size > limit)) {
+      setError(
+        `Browser upload limit is ${status.browserUploadLimitMB || 4} MB per file. Import larger documents from Google Drive or send through WhatsApp (up to 25 MB).`,
       );
+      return;
+    }
+    setPendingFiles(selected);
+    setUploadTags(selected.map(() => ""));
+  }
+  async function upload() {
+    await run(async () => {
+      for (let i = 0; i < pendingFiles.length; i++) {
+        const body = new FormData();
+        body.append("files", pendingFiles[i]);
+        body.append("tags", JSON.stringify([uploadTags[i].trim()]));
+        await api("/api/documents/upload", body);
+      }
+      setNote(
+        `${pendingFiles.length} document(s) stored. Indexing queued for the persistent worker.`,
+      );
+      setPendingFiles([]);
+      setUploadTags([]);
       await refresh();
     });
   }
+
   async function ask() {
     await run(async () => {
       setOutput(null);
@@ -377,19 +337,9 @@ export default function App() {
         <div className="sidebar-bottom">
           <div className="live-dot" /> Persistent cloud workspace
           <p>
-            Documents are shared with authorized practice staff. Conversations
-            and memories are private per user.
+            No-login shared workspace. Documents and web conversation history
+            belong to this practice workspace.
           </p>
-          <button
-            onClick={() =>
-              void run(async () => {
-                await api("/api/auth/logout", {});
-                setUser(null);
-              })
-            }
-          >
-            <LogOut size={16} /> Sign out · {user.username}
-          </button>
         </div>
       </aside>
       <main>
@@ -410,21 +360,32 @@ export default function App() {
             <span className="avatar">
               {user.username?.slice(0, 2).toUpperCase()}
             </span>
-            <button
-              title="Sign out"
-              aria-label="Sign out"
-              onClick={() =>
-                void run(async () => {
-                  await api("/api/auth/logout", {});
-                  setUser(null);
-                })
-              }
-            >
-              <LogOut size={17} />
-            </button>
           </div>
         </header>
         <div className="content">
+          {!languageChosen && (
+            <section className="panel">
+              <h3>Conversation language</h3>
+              <p>
+                English or professional Hyderabadi Urdu in Roman script. Change
+                it later in Research Studio or Assistant.
+              </p>
+              <select
+                aria-label="Conversation language"
+                value={dialect}
+                onChange={(e) => setDialect(e.target.value)}
+              >
+                <option>English</option>
+                <option>Professional Hyderabadi Roman Urdu</option>
+              </select>{" "}
+              <button
+                className="primary"
+                onClick={() => setLanguageChosen(true)}
+              >
+                Save language
+              </button>
+            </section>
+          )}
           {error && (
             <div className="error">
               <AlertCircle size={18} />
@@ -461,13 +422,52 @@ export default function App() {
                   hidden
                   type="file"
                   multiple
-                  accept=".pdf,.doc,.docx,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.tif,.tiff,.webp"
+                  accept=".pdf,.doc,.docx,.xlsx,.txt,.md,.csv,.json,.png,.jpg,.jpeg,.tif,.tiff,.webp"
                   onChange={(e) => {
-                    void upload(e.target.files);
+                    chooseFiles(e.target.files);
                     e.target.value = "";
                   }}
                 />
               </div>
+              {pendingFiles.length > 0 && (
+                <section className="panel">
+                  <h3>Add search keywords</h3>
+                  <p>
+                    Enter a unique keyword for every document, for example
+                    “Shamshabad 626 court order”.
+                  </p>
+                  {pendingFiles.map((file, i) => (
+                    <Field key={i} label={file.name}>
+                      <input
+                        required
+                        minLength={2}
+                        maxLength={100}
+                        placeholder="Unique search keyword"
+                        value={uploadTags[i] || ""}
+                        onChange={(e) =>
+                          setUploadTags((tags) =>
+                            tags.map((tag, j) =>
+                              i === j ? e.target.value : tag,
+                            ),
+                          )
+                        }
+                      />
+                    </Field>
+                  ))}
+                  <button
+                    className="primary"
+                    disabled={
+                      busy || uploadTags.some((tag) => tag.trim().length < 2)
+                    }
+                    onClick={() => void upload()}
+                  >
+                    Store & index documents
+                  </button>{" "}
+                  <button disabled={busy} onClick={() => setPendingFiles([])}>
+                    Cancel
+                  </button>
+                </section>
+              )}
               <div className="stats">
                 <div>
                   <small>STORED DOCUMENTS</small>
@@ -528,6 +528,15 @@ export default function App() {
                       }
                     />
                   </Field>
+                  <Field label="Unique search keyword">
+                    <input
+                      required
+                      value={plain.uniqueTag}
+                      onChange={(e) =>
+                        setPlain({ ...plain, uniqueTag: e.target.value })
+                      }
+                    />
+                  </Field>
                   <Field label="Document text">
                     <textarea
                       rows={7}
@@ -539,11 +548,16 @@ export default function App() {
                   </Field>
                   <button
                     className="primary"
-                    disabled={busy || !plain.title || plain.text.length < 20}
+                    disabled={
+                      busy ||
+                      !plain.title ||
+                      plain.uniqueTag.trim().length < 2 ||
+                      plain.text.length < 20
+                    }
                     onClick={() =>
                       void run(async () => {
                         await api("/api/documents/analyze", plain);
-                        setPlain({ title: "", text: "" });
+                        setPlain({ title: "", text: "", uniqueTag: "" });
                         setShowPaste(false);
                         await refresh();
                       })
@@ -851,7 +865,10 @@ export default function App() {
                   <Field label="Response language">
                     <select
                       value={dialect}
-                      onChange={(e) => setDialect(e.target.value)}
+                      onChange={(e) => {
+                        setDialect(e.target.value);
+                        setLanguageChosen(true);
+                      }}
                     >
                       <option>English</option>
                       <option>Professional Hyderabadi Roman Urdu</option>
@@ -1449,7 +1466,10 @@ export default function App() {
                   </h3>
                   <select
                     value={dialect}
-                    onChange={(e) => setDialect(e.target.value)}
+                    onChange={(e) => {
+                      setDialect(e.target.value);
+                      setLanguageChosen(true);
+                    }}
                   >
                     <option>English</option>
                     <option>Professional Hyderabadi Roman Urdu</option>
@@ -1648,9 +1668,10 @@ export default function App() {
                     `Active backend: ${status.integrations?.vector || "pgvector"}. Pinecone is optional; PostgreSQL remains the canonical store.`,
                   ],
                   [
-                    "Daily monitoring",
-                    true,
-                    `Durable scheduler. Default timezone: ${status.timezone || "Asia/Kolkata"}. Use an always-running deployment.`,
+                    "Persistent worker & monitoring",
+                    !!status.worker?.at &&
+                      Date.now() - Date.parse(status.worker.at) < 120000,
+                    `Worker heartbeat: ${status.worker?.at ? date(status.worker.at) : "not connected"}. Runs OCR, full-corpus studies, WhatsApp replies and daily checks at 19:00 ${status.timezone || "Asia/Kolkata"}.`,
                   ],
                 ].map(([title, connected, text]) => (
                   <section className="panel integration" key={String(title)}>

@@ -2,7 +2,10 @@ import pg from "pg";
 import crypto from "node:crypto";
 export const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  max: Number(process.env.DB_POOL_SIZE || 8),
+  max: Number(process.env.DB_POOL_SIZE || (process.env.VERCEL ? 3 : 8)),
+  connectionTimeoutMillis: 15000,
+  idleTimeoutMillis: 10000,
+  allowExitOnIdle: true,
   ...(process.env.DATABASE_SSL === "true"
     ? {
         ssl: {
@@ -16,13 +19,19 @@ export async function q(text: string, values: any[] = []) {
 }
 export const id = () => crypto.randomUUID();
 export async function migrate() {
-  await pool.query(`
+  const client = await pool.connect();
+  try {
+    await client.query("SELECT pg_advisory_lock(74201931)");
+    const q = async (text: string, values: any[] = []) =>
+      (await client.query(text, values)).rows;
+    await client.query(`
  CREATE EXTENSION IF NOT EXISTS vector;
  CREATE TABLE IF NOT EXISTS documents (
  id uuid PRIMARY KEY, title text NOT NULL, sha text UNIQUE NOT NULL, mime text NOT NULL,
  bytes bytea, text text NOT NULL DEFAULT '', metadata jsonb NOT NULL DEFAULT '{}',
  status text NOT NULL DEFAULT 'queued', error text, drive_id text UNIQUE, drive_url text,
  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+ CREATE UNIQUE INDEX IF NOT EXISTS documents_unique_tag ON documents(lower(metadata->>'uniqueTag')) WHERE metadata->>'uniqueTag' IS NOT NULL AND metadata->>'uniqueTag' <> '';
  CREATE TABLE IF NOT EXISTS chunks (id uuid PRIMARY KEY, document_id uuid NOT NULL REFERENCES documents ON DELETE CASCADE,
  page int NOT NULL, ordinal int NOT NULL, text text NOT NULL, embedding vector(1536),
  search tsvector GENERATED ALWAYS AS (to_tsvector('simple', text)) STORED,
@@ -36,7 +45,6 @@ export async function migrate() {
  CREATE INDEX IF NOT EXISTS conversations_owner ON conversations(owner,created_at DESC);
  CREATE TABLE IF NOT EXISTS memories (id uuid PRIMARY KEY, owner text, text text, embedding vector(1536), created_at timestamptz DEFAULT now());
  CREATE INDEX IF NOT EXISTS memories_owner ON memories(owner);
- CREATE TABLE IF NOT EXISTS sessions (token_hash text PRIMARY KEY, username text, role text, expires timestamptz);
  CREATE TABLE IF NOT EXISTS jobs (id uuid PRIMARY KEY, kind text NOT NULL, payload jsonb NOT NULL, status text NOT NULL DEFAULT 'pending', attempts int DEFAULT 0, run_after timestamptz DEFAULT now(), locked_at timestamptz, result jsonb, error text, created_at timestamptz DEFAULT now());
  CREATE INDEX IF NOT EXISTS jobs_ready ON jobs(status,run_after);
  CREATE TABLE IF NOT EXISTS monitors (id uuid PRIMARY KEY, document_id uuid REFERENCES documents ON DELETE SET NULL,
@@ -51,16 +59,22 @@ export async function migrate() {
  CREATE TABLE IF NOT EXISTS webhook_events (event_id text PRIMARY KEY, created_at timestamptz DEFAULT now());
  CREATE TABLE IF NOT EXISTS settings (key text PRIMARY KEY,value jsonb NOT NULL);
  `);
-  const old = await q(`SELECT value FROM settings WHERE key='embedding_model'`);
-  const model = `${process.env.AI_PROVIDER || "openai"}:${process.env.EMBEDDING_MODEL || (process.env.AI_PROVIDER === "gemini" ? "gemini-embedding-001" : "text-embedding-3-small")}:1536`;
-  if (old.length && old[0].value !== model)
-    throw new Error(
-      "Embedding model differs from stored index. Keep the configured model or reindex the database before changing it.",
+    const old = await q(
+      `SELECT value FROM settings WHERE key='embedding_model'`,
     );
-  await q(
-    `INSERT INTO settings(key,value) VALUES('embedding_model',$1) ON CONFLICT DO NOTHING`,
-    [JSON.stringify(model)],
-  );
+    const model = `${process.env.AI_PROVIDER || "openai"}:${process.env.EMBEDDING_MODEL || (process.env.AI_PROVIDER === "gemini" ? "gemini-embedding-001" : "text-embedding-3-small")}:1536`;
+    if (old.length && old[0].value !== model)
+      throw new Error(
+        "Embedding model differs from stored index. Keep the configured model or reindex the database before changing it.",
+      );
+    await q(
+      `INSERT INTO settings(key,value) VALUES('embedding_model',$1) ON CONFLICT DO NOTHING`,
+      [JSON.stringify(model)],
+    );
+  } finally {
+    await client.query("SELECT pg_advisory_unlock(74201931)").catch(() => {});
+    client.release();
+  }
 }
 export async function enqueue(kind: string, payload: any, when = new Date()) {
   const key = id();

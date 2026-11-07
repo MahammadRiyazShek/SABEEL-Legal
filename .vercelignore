@@ -1,0 +1,8 @@
+node_modules
+previews
+.git
+.env
+.env.local
+.env.production
+tests
+*.zip

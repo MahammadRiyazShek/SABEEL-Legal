@@ -5,7 +5,6 @@ import { spawn, ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import PDFDocument from "pdfkit";
 import { PDFDocument as ReadPDF } from "pdf-lib";
-import bcrypt from "bcryptjs";
 
 // The external AI endpoint is a local deterministic fixture, never a real provider.
 // DATABASE_URL is deliberately NOT used: require an explicitly dedicated test DB.
@@ -43,7 +42,6 @@ test(
     let cookie = "";
     let docId = "";
     let pdfId = "";
-    const password = "integration-password-only-123";
     const fixture = http.createServer(async (req, res) => {
       const parts: Buffer[] = [];
       for await (const part of req) parts.push(Buffer.from(part));
@@ -93,18 +91,12 @@ test(
     });
     await new Promise<void>((r) => fixture.listen(0, "127.0.0.1", r));
     const aiPort = (fixture.address() as any).port;
-    const staffHash = await bcrypt.hash("staff-integration-password", 4);
     function start() {
       app = spawn(process.execPath, ["--import", "tsx", "backend/server.ts"], {
         cwd: process.cwd(),
         env: {
           ...process.env,
           DATABASE_URL: db,
-          ADMIN_PASSWORD: password,
-          ADMIN_USERNAME: "admin",
-          STAFF_USERS_JSON: JSON.stringify([
-            { username: "staff", passwordHash: staffHash, role: "staff" },
-          ]),
           NODE_ENV: "production",
           PORT: String(port),
           APP_URL: base,
@@ -185,30 +177,28 @@ test(
     try {
       start();
       await ready();
-      await t.test("private APIs require authentication", async () => {
-        assert.equal((await request("/api/documents")).status, 401);
-      });
       await t.test(
-        "wrong login is rejected, valid login has HttpOnly cookie",
+        "workspace opens without credentials or cookies",
         async () => {
-          assert.equal(
-            (
-              await request("/api/auth/login", {
-                username: "admin",
-                password: "wrong",
-              })
-            ).status,
-            401,
-          );
-          const r = await request("/api/auth/login", {
-            username: "admin",
-            password,
-          });
+          assert.equal((await request("/api/documents")).status, 200);
+          const r = await request("/api/workspace");
           assert.equal(r.status, 200);
-          assert.ok(r.headers.get("set-cookie")?.includes("HttpOnly"));
-          cookie = r.headers.get("set-cookie")!.split(";")[0];
+          assert.equal(r.headers.get("set-cookie"), null);
+          assert.equal((await r.json()).username, "workspace");
         },
       );
+      await t.test("login and signup endpoints do not exist", async () => {
+        assert.equal(
+          (
+            await request("/api/auth/login", {
+              username: "admin",
+              password: "x",
+            })
+          ).status,
+          404,
+        );
+        assert.equal((await request("/api/auth/signup", {})).status, 404);
+      });
       await t.test("cross-origin write is rejected", async () => {
         const r = await fetch(base + "/api/chat", {
           method: "POST",
@@ -221,19 +211,17 @@ test(
         });
         assert.equal(r.status, 403);
       });
-      await t.test("staff cannot access admin operations", async () => {
-        const r = await request("/api/auth/login", {
-          username: "staff",
-          password: "staff-integration-password",
-        });
-        const staffCookie = r.headers.get("set-cookie")!.split(";")[0];
+      await t.test(
+        "workspace can access its audit without a login",
+        async () => {
+          assert.equal((await request("/api/audit")).status, 200);
+        },
+      );
+      await t.test("keyword is required when storing text", async () => {
         assert.equal(
-          (await request("/api/drive/sync", {}, "POST", staffCookie)).status,
-          403,
-        );
-        assert.equal(
-          (await request("/api/audit", undefined, "GET", staffCookie)).status,
-          403,
+          (await request("/api/documents/analyze", { title: "missing", text }))
+            .status,
+          400,
         );
       });
       await t.test(
@@ -241,6 +229,7 @@ test(
         async () => {
           const d = await json("/api/documents/analyze", {
             title: "integration-" + Date.now(),
+            uniqueTag: "Integration hearing " + Date.now(),
             text: text + " Unique run " + Date.now(),
           });
           docId = d.document.id;
@@ -251,7 +240,7 @@ test(
           const found = listing.documents.find((d: any) => d.id === docId);
           assert.equal(found.status, "ready");
           assert.equal(found.nextHearingDate, "2026-11-14");
-          assert.ok(found.uniqueTag.startsWith("SAB-"));
+          assert.ok(found.uniqueTag.startsWith("Integration hearing"));
         },
       );
       let originalPDF: Buffer;
@@ -260,6 +249,7 @@ test(
         async () => {
           originalPDF = await pdfBytes();
           const f = new FormData();
+          f.append("tags", JSON.stringify(["Integration PDF " + Date.now()]));
           f.append(
             "files",
             new Blob([new Uint8Array(originalPDF)], {
@@ -286,6 +276,7 @@ test(
         "binary duplicate does not create another document",
         async () => {
           const f = new FormData();
+          f.append("tags", JSON.stringify(["Integration PDF " + Date.now()]));
           f.append(
             "files",
             new Blob([new Uint8Array(originalPDF)], {
@@ -429,12 +420,12 @@ test(
         },
       );
       await t.test(
-        "server restart preserves sessions, documents and conversation",
+        "server restart preserves documents and shared conversation",
         async () => {
           await stop();
           start();
           await ready();
-          assert.equal((await request("/api/auth/me")).status, 200);
+          assert.equal((await request("/api/workspace")).status, 200);
           assert.ok(
             (
               await json("/api/documents?search=integration-original.pdf")
@@ -443,10 +434,13 @@ test(
           assert.ok((await json("/api/chat/history")).history.length >= 2);
         },
       );
-      await t.test("logout revokes the persisted session", async () => {
-        await json("/api/auth/logout", {});
-        assert.equal((await request("/api/auth/me")).status, 401);
-      });
+      await t.test(
+        "logout endpoint is absent and workspace remains open",
+        async () => {
+          assert.equal((await request("/api/auth/logout", {})).status, 404);
+          assert.equal((await request("/api/workspace")).status, 200);
+        },
+      );
     } finally {
       await stop();
       fixture.closeAllConnections();

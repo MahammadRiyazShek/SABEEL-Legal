@@ -1,6 +1,6 @@
-import { q, id, vector } from "./db.ts";
-import { embed, generate, DATA_RULES, configured } from "./ai.ts";
-import { pinecone, webResearch } from "./integrations.ts";
+import { q, id, vector } from "./db.js";
+import { embed, generate, DATA_RULES, configured } from "./ai.js";
+import { pinecone, webResearch } from "./integrations.js";
 export function filters(input: any, start = 1) {
   const values: any[] = [];
   const clauses: string[] = [`d.status='ready'`];

@@ -5,9 +5,10 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import crypto from "node:crypto";
 import mammoth from "mammoth";
-import { supportsDate, supportsEntity } from "./evidence.ts";
-import { q, pool, id, enqueue, vector } from "./db.ts";
-import { generate, embed, DATA_RULES, configured } from "./ai.ts";
+import ExcelJS from "exceljs";
+import { supportsDate, supportsEntity } from "./evidence.js";
+import { q, pool, id, enqueue, vector } from "./db.js";
+import { generate, embed, DATA_RULES, configured } from "./ai.js";
 import {
   driveConfigured,
   driveUpload,
@@ -17,7 +18,7 @@ import {
   pinecone,
   validateURL,
   allowedPhone,
-} from "./integrations.ts";
+} from "./integrations.js";
 const exec = promisify(execFile);
 export function chunkPages(pages: string[], size = 1500, overlap = 200) {
   if (size < 10 || overlap < 0 || overlap >= size)
@@ -97,6 +98,31 @@ export async function extract(
       );
       return stdout.split("\f");
     }
+    if (/\.xlsx$/i.test(name) || mime.includes("spreadsheetml")) {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(bytes as any);
+      return workbook.worksheets.map((sheet) => {
+        const lines = ["Worksheet: " + sheet.name];
+        sheet.eachRow((row, index) =>
+          lines.push(
+            "Row " +
+              index +
+              ": " +
+              (row.values as any[])
+                .slice(1)
+                .map((value: any) =>
+                  value == null
+                    ? ""
+                    : typeof value === "object"
+                      ? JSON.stringify(value)
+                      : String(value),
+                )
+                .join(" | "),
+          ),
+        );
+        return lines.join("\n");
+      });
+    }
     if (/\.docx$/i.test(name) || mime.includes("wordprocessingml"))
       return [(await mammoth.extractRawText({ buffer: bytes })).value];
     if (/\.doc$/i.test(name) || mime === "application/msword")
@@ -115,7 +141,7 @@ export async function extract(
     )
       return [bytes.toString("utf8")];
     throw new Error(
-      "Supported files: PDF, DOCX, DOC, TXT, MD, CSV, JSON, PNG, JPG, TIFF, WEBP",
+      "Supported files: PDF, DOCX, DOC, XLSX, TXT, MD, CSV, JSON, PNG, JPG, TIFF, WEBP",
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -140,6 +166,7 @@ export async function addDocument(
   mime: string,
   title: string,
   drive?: any,
+  uniqueTag?: string,
 ) {
   if (!bytes.length) throw new Error("Empty document");
   if (bytes.length > 25000000) throw new Error("Maximum file size is 25 MB");
@@ -164,7 +191,10 @@ export async function addDocument(
         bytes,
         drive?.id || null,
         drive?.webViewLink || null,
-        { ...(drive ? { driveModified: drive.modifiedTime } : {}) },
+        {
+          ...(drive ? { driveModified: drive.modifiedTime } : {}),
+          ...(uniqueTag ? { uniqueTag: uniqueTag.trim() } : {}),
+        },
       ],
     );
     if (!added.rows.length) {
@@ -284,7 +314,7 @@ export async function ingest(documentId: string) {
           ],
         );
       await client.query(
-        `UPDATE documents SET text=$2,metadata=$3,status='ready',error=NULL,updated_at=now() WHERE id=$1`,
+        `UPDATE documents SET text=$2,metadata=(metadata||$3::jsonb)||CASE WHEN metadata ? 'uniqueTag' THEN jsonb_build_object('uniqueTag',metadata->'uniqueTag') ELSE '{}'::jsonb END,status='ready',error=NULL,updated_at=now() WHERE id=$1`,
         [documentId, text, { ...d.metadata, ...meta }],
       );
       await client.query("COMMIT");

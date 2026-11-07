@@ -1,7 +1,7 @@
 import { load } from "cheerio";
-import { q, id, enqueue, pool } from "./db.ts";
-import { fetchSource, waSend, allowedPhone } from "./integrations.ts";
-import { extract } from "./documents.ts";
+import { q, id, enqueue, pool } from "./db.js";
+import { fetchSource, waSend, allowedPhone } from "./integrations.js";
+import { extract } from "./documents.js";
 export function localSlot(timezone: string, now = new Date()) {
   const p = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,

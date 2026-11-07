@@ -1,0 +1,32 @@
+services:
+  - type: worker
+    name: sabeel-legal-worker
+    runtime: docker
+    plan: starter
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerCommand: npm run worker
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      - key: DB_POOL_SIZE
+        value: "8"
+      - key: AI_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: WORKER_CONCURRENCY
+        value: "2"
+      - key: DEFAULT_TIMEZONE
+        value: Asia/Kolkata
+      - key: OCR_LANGUAGES
+        value: eng
+      - key: DRIVE_AUTO_SYNC
+        value: "false"

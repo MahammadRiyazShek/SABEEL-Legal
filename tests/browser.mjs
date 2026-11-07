@@ -9,7 +9,6 @@ if (!db)
   );
 const port = Number(process.env.BROWSER_TEST_PORT || 3198),
   base = `http://127.0.0.1:${port}`;
-const password = "browser-test-password-only";
 const app = spawn(process.execPath, ["--import", "tsx", "backend/server.ts"], {
   env: {
     ...process.env,
@@ -17,8 +16,6 @@ const app = spawn(process.execPath, ["--import", "tsx", "backend/server.ts"], {
     NODE_ENV: "production",
     PORT: String(port),
     APP_URL: base,
-    ADMIN_USERNAME: "admin",
-    ADMIN_PASSWORD: password,
     AI_PROVIDER: "openai",
     OPENAI_API_KEY: "",
     GEMINI_API_KEY: "",
@@ -50,11 +47,13 @@ try {
   page.on("pageerror", (e) => errors.push(e.message));
   await mkdir("previews", { recursive: true });
   await page.goto(base, { waitUntil: "networkidle" });
-  await page.getByRole("heading", { name: /SABEEL/ }).waitFor();
-  await page.screenshot({ path: "previews/login-desktop.png", fullPage: true });
-  await page.getByLabel("Username").fill("admin");
-  await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Sign in to workspace" }).click();
+  assert.equal(await page.locator('input[type="password"]').count(), 0);
+  assert.equal(
+    await page
+      .getByRole("button", { name: /sign in|sign up|sign out/i })
+      .count(),
+    0,
+  );
   await page
     .getByRole("heading", { name: "Your documents, working together." })
     .waitFor();
@@ -91,7 +90,7 @@ try {
   });
   assert.deepEqual(errors, []);
   console.log(
-    "PASS: desktop login, all six workspace screens, mobile 390px layout, no uncaught browser errors.",
+    "PASS: no-login desktop, all six workspace screens, mobile 390px layout, no uncaught browser errors.",
   );
 } finally {
   await browser?.close();

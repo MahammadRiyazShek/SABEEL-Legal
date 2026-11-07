@@ -1,8 +1,8 @@
 import { JWT } from "google-auth-library";
 import dns from "node:dns/promises";
 import net from "node:net";
-import { jsonFetch } from "./ai.ts";
-import { q } from "./db.ts";
+import { jsonFetch } from "./ai.js";
+import { q } from "./db.js";
 export function isPublicIP(ip: string) {
   if (net.isIP(ip) === 4) {
     const [a, b] = ip.split(".").map(Number);
@@ -286,6 +286,12 @@ export async function waSend(to: string, text: string, forceTemplate = false) {
     throw new Error(
       "An approved WhatsApp alert template is required outside the 24-hour reply window",
     );
+  if (!template && text.length > 3800) {
+    const results = [];
+    for (let i = 0; i < text.length; i += 3800)
+      results.push(await waSend(to, text.slice(i, i + 3800)));
+    return { parts: results.length, results };
+  }
   const body = template
     ? {
         type: "template",
@@ -295,7 +301,17 @@ export async function waSend(to: string, text: string, forceTemplate = false) {
           components: [
             {
               type: "body",
-              parameters: [{ type: "text", text: text.slice(0, 1000) }],
+              parameters: [
+                {
+                  type: "text",
+                  text:
+                    text.length > 950
+                      ? text.slice(0, 800) +
+                        "… Full result: " +
+                        (process.env.APP_URL || "SABEEL workspace")
+                      : text,
+                },
+              ],
             },
           ],
         },

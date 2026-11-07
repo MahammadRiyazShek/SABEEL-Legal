@@ -1,9 +1,9 @@
-import { q, pool } from "./db.ts";
-import { ingest, mirrorDrive, mirrorPinecone, syncDrive } from "./documents.ts";
-import { fullStudy } from "./research.ts";
-import { runMonitor, schedulerTick } from "./monitor.ts";
-import { processWhatsApp, summarizeMemory } from "./chat.ts";
-import { waSend } from "./integrations.ts";
+import { q, pool, enqueue } from "./db.js";
+import { ingest, mirrorDrive, mirrorPinecone, syncDrive } from "./documents.js";
+import { fullStudy } from "./research.js";
+import { runMonitor, schedulerTick } from "./monitor.js";
+import { processWhatsApp, summarizeMemory } from "./chat.js";
+import { waSend } from "./integrations.js";
 let stopped = false;
 async function claim() {
   return (
@@ -25,8 +25,15 @@ async function execute(job: any) {
       return { indexed: true };
     case "drive_sync":
       return syncDrive();
-    case "study":
-      return fullStudy(job);
+    case "study": {
+      const result = await fullStudy(job);
+      if (job.payload.notifyPhone)
+        await enqueue("notify", {
+          phone: job.payload.notifyPhone,
+          text: "SABEEL research completed\n" + result.report,
+        });
+      return result;
+    }
     case "monitor":
       return runMonitor(job.payload.monitorId);
     case "whatsapp":
@@ -86,6 +93,23 @@ async function loop() {
   }
 }
 export async function startWorkers() {
+  stopped = false;
+  const heartbeat = async () =>
+    q(
+      "INSERT INTO settings(key,value) VALUES('worker_heartbeat',$1) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value",
+      [
+        JSON.stringify({
+          at: new Date().toISOString(),
+          concurrency: Number(process.env.WORKER_CONCURRENCY || 2),
+        }),
+      ],
+    );
+  await heartbeat();
+  const healthTimer = setInterval(
+    () => void heartbeat().catch(console.error),
+    30000,
+  );
+  healthTimer.unref();
   await q(
     `UPDATE jobs SET status='pending' WHERE status='running' AND locked_at<now()-interval '5 minutes'`,
   );
@@ -124,6 +148,7 @@ export async function startWorkers() {
   return async () => {
     stopped = true;
     clearInterval(timer);
+    clearInterval(healthTimer);
     clearInterval(recovery);
     await Promise.race([
       Promise.all(workers),
