@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: sabeel-legal
+    runtime: docker
+    plan: starter
+    region: singapore
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: sabeel-postgres
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "false"
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: AI_PROVIDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: VECTOR_BACKEND
+        value: pgvector
+      - key: DEFAULT_TIMEZONE
+        value: Asia/Kolkata
+      - key: WORKER_CONCURRENCY
+        value: "2"
+      - key: OCR_LANGUAGES
+        value: eng
+      - key: DRIVE_AUTO_SYNC
+        value: "false"
+databases:
+  - name: sabeel-postgres
+    databaseName: sabeel
+    user: sabeel
+    plan: basic-256mb
+    region: singapore
+    postgresMajorVersion: "17"
+    ipAllowList: []
