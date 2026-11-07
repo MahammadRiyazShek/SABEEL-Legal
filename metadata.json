@@ -1,6 +1,6 @@
 {
-  "name": "WhatsApp AI Drive Assistant",
-  "description": "Intelligent personal assistant accessible through WhatsApp with Google Drive document organization, RAG search, long-term memory, internet research, and automated task execution.",
+  "name": "SABEEL - Legal WhatsApp AI & Document Vault",
+  "description": "WhatsApp-first intelligent legal assistant with Google Drive document vault, automated 7 PM court causelist tracking, RAG legal research, and Hyderabadi Roman Urdu/English support.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

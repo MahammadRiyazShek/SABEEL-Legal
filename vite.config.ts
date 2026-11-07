@@ -1,42 +1,21 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig, Plugin } from 'vite';
-import dotenv from 'dotenv';
-
-dotenv.config();
-
-function apiPlugin(): Plugin {
-  return {
-    name: 'development-api',
-    configureServer(server) {
-      server.middlewares.use((req, _res, next) => {
-        if (req.url === '/' || req.url?.startsWith('/?')) req.url = '/index.source.html';
-        next();
-      });
-      // Reuse the production security, CORS and validation in development too.
-      server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith('/api/')) return next();
-        process.env.VITE_DEV = 'true';
-        const { default: app } = await import('./server.ts');
-        app(req as any, res as any, next);
-      });
-    },
-  };
-}
+import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
-    base: './',
-    build: { rollupOptions: { input: path.resolve(import.meta.dirname, 'index.source.html') } },
-    plugins: [react(), tailwindcss(), apiPlugin()],
+    plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
-        '@': path.resolve(import.meta.dirname, '.'),
+        '@': path.resolve(__dirname, '.'),
       },
     },
     server: {
+      // HMR is disabled in AI Studio via DISABLE_HMR env var.
+      // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
+      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
   };
